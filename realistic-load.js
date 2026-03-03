@@ -189,6 +189,12 @@ const TOTAL_STAGES = {
     { duration: "2m", target: 50000 },
     { duration: "1m", target: 0 },
   ],
+  extremeSmall: [
+    { duration: "1m", target: 5000 },
+    { duration: "1m", target: 10000 },
+    { duration: "2m", target: 15000 },
+    { duration: "1m", target: 0 },
+  ],
 };
 
 function scaleStages(stages, ratio) {
