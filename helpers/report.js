@@ -1378,8 +1378,8 @@ ${buildChecksSection(data)}
   // Return both HTML and JSON files, plus text summary to stdout
   const reportBaseName = `${scenario}_${stageName}`;
   return {
-    [`./load-tests/results/${reportBaseName}_report.html`]: html,
-    [`./load-tests/results/${reportBaseName}_report.json`]: JSON.stringify(
+    [`./results/${reportBaseName}_report.html`]: html,
+    [`./results/${reportBaseName}_report.json`]: JSON.stringify(
       jsonSummary,
       null,
       2,
@@ -1496,7 +1496,7 @@ function buildTextSummary(
     lines.push(`  ${prefix} ${r.text}`);
   }
   lines.push("");
-  lines.push("─── Report files saved to ./load-tests/results/ directory ───");
+  lines.push("─── Report files saved to ./results/ directory ───");
   lines.push("");
 
   return lines.join("\n");

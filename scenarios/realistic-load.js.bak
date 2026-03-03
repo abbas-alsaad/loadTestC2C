@@ -1,6 +1,6 @@
 /**
  * ═══════════════════════════════════════════════════════════════════════
- * REALISTIC LOAD — Mixed Traffic Simulation (FINAL)
+ * REALISTIC LOAD — Mixed Traffic Simulation
  * ═══════════════════════════════════════════════════════════════════════
  *
  * Simulates REAL production traffic with realistic user behavior mix.
@@ -8,38 +8,57 @@
  * across 4 scenarios with production-like ratios:
  *
  * ┌──────────────────────────────────────────────────────────────────┐
- * │              TOTAL CONCURRENT USERS (e.g. 50,000)               │
+ * │              TOTAL CONCURRENT USERS (e.g. 10,000)               │
  * ├─────────────────────────────────────────────┬─────────┬─────────┤
  * │ ████████████████████████████████████████████ │█████████│███      │
- * │ Chat + Offers  75%           (37,500 VUs)   │Browse 20│Idle 5%  │
- * │ ┌─────────────────┬─────────────────┐       │(10,000) │(2,500)  │
+ * │ Chat + Offers  75%            (7,500 VUs)   │Browse 20│Idle 5%  │
+ * │ ┌─────────────────┬─────────────────┐       │(2,000)  │(500)    │
  * │ │ Sellers  37.5%  │ Buyers  37.5%   │       │         │         │
- * │ │ (18,750 VUs)    │ (18,750 VUs)    │       │         │         │
+ * │ │ (3,750 VUs)     │ (3,750 VUs)     │       │         │         │
  * │ │ MessageHub      │ MessageHub      │       │REST API │Presence │
  * │ │ listen for msgs │ send messages   │       │browse   │Hub only │
- * │ │ mark as read ★  │ verify read ★   │       │search   │heartbeat│
- * │ │ verify delivery │ create offers   │       │view     │online   │
- * │ └─────────────────┴─────────────────┘       │         │         │
+ * │ │ verify delivery │ create offers   │       │search   │heartbeat│
+ * │ └─────────────────┴─────────────────┘       │view     │online   │
  * └─────────────────────────────────────────────┴─────────┴─────────┘
  *
- * ── Full Chat Lifecycle ───────────────────────────────────────────────
+ * ── How It Works ──────────────────────────────────────────────────────
  *
- *   1. Buyer  → SendMessage (with CID + timestamp)
- *   2. Seller ← NewMessage  (verifies CID, measures latency)
- *   3. Seller → MessageRead (marks message IDs as read in DB)
- *   4. Buyer  ← MessageRead event (verifies read receipt arrived)
- *   5. Buyer  → CreateOffer (REST)
- *   6. Seller → AcceptOffer (REST)
+ *   k6 runs 4 separate scenarios in parallel, each with its own VU pool.
+ *   VU numbering is independent per scenario, so Seller VU N naturally
+ *   pairs with Buyer VU N (both call getTestPair(N) → same pair).
+ *
+ *   CHAT SELLERS (37.5%):
+ *     Connect to MessageHub as seller → listen for NewMessage from buyer
+ *     → verify content via correlation ID → measure cross-user latency
+ *
+ *   CHAT BUYERS (37.5%):
+ *     Connect to MessageHub as buyer → send messages with [VU-{pair}-TS{now}]
+ *     → create offer via REST → seller accepts → listen for events
+ *
+ *   BROWSERS (20%):
+ *     HTTP only — browse items, view details, get categories, banners,
+ *     search filters, check unread count. Think time between each action.
+ *
+ *   IDLE (5%):
+ *     Connect to PresenceHub → send Heartbeat → hold connection
+ *     → occasionally check IsUserOnline → stay "online" in Redis
+ *
+ * ── What This Proves ──────────────────────────────────────────────────
+ *
+ *   ✓ System handles mixed workloads (WS + HTTP) simultaneously
+ *   ✓ Cross-user message delivery under realistic conditions
+ *   ✓ REST API latency while SignalR is under load
+ *   ✓ Redis presence + backplane under concurrent traffic types
+ *   ✓ Offer lifecycle works during peak chat activity
+ *   ✓ Database handles reads (browsing) + writes (messages/offers) together
  *
  * ── Stages ────────────────────────────────────────────────────────────
  *
- *   micro:    5 total users      → quick local validation
  *   smoke:    20 total users     → quick validation
  *   low:     100 total users     → baseline
  *   medium: 1,000 total users    → moderate load
  *   high:   5,000 total users    → heavy load
- *   massive: 10,000 total users  → large production simulation
- *   extreme: 50,000 total users  → maximum stress test (~5 min)
+ *   massive: 10,000 total users  → full production simulation
  *
  * ── Usage ─────────────────────────────────────────────────────────────
  *
@@ -49,10 +68,10 @@
  *          --env STAGE=smoke \
  *          load-tests/scenarios/realistic-load.js
  *
- *   # 50,000 users — extreme (~5 min)
+ *   # 10,000 users
  *   k6 run --env TARGET_URL=https://c2c-api.gini.iq \
  *          --env WS_URL=wss://ws-c2c-api.gini.iq \
- *          --env STAGE=extreme \
+ *          --env STAGE=massive \
  *          load-tests/scenarios/realistic-load.js
  *
  * ═══════════════════════════════════════════════════════════════════════
@@ -91,7 +110,7 @@ import exec from "k6/execution";
 // METRICS
 // ═══════════════════════════════════════════════════════════════
 
-// ── WebSocket Connection ─────────────────────────────────────
+// ── WebSocket Connection (shared by sellers, buyers, idle) ────
 const wsConnectingDuration = new Trend("ws_connecting_duration", true);
 const wsHandshakeDuration = new Trend("ws_handshake_duration", true);
 const wsErrors = new Rate("ws_errors");
@@ -103,12 +122,6 @@ const messagesDelivered = new Counter("messages_delivered");
 const messageDeliveryLatency = new Trend("message_delivery_latency", true);
 const messageContentMatch = new Rate("message_content_match");
 const threadReceived = new Counter("message_thread_received");
-
-// ── Mark-as-Read (★ New) ─────────────────────────────────────
-const messagesMarkedRead = new Counter("messages_marked_read");
-const markReadLatency = new Trend("mark_read_latency", true);
-const readReceiptsReceived = new Counter("read_receipts_received");
-const readReceiptMatch = new Rate("read_receipt_match");
 
 // ── Offer Lifecycle ──────────────────────────────────────────
 const offerCreationLatency = new Trend("offer_creation_latency", true);
@@ -128,7 +141,7 @@ const browseErrors = new Rate("browse_errors");
 const idleConnections = new Counter("idle_connections");
 const idleHeartbeats = new Counter("idle_heartbeats");
 
-// ── Reliability ──────────────────────────────────────────────
+// ── Handshake & Reconnection Tracking ────────────────────────
 const handshakeFailures = new Counter("handshake_failures");
 const wsReconnects = new Counter("ws_reconnects");
 const messagesDuplicated = new Counter("messages_duplicated");
@@ -145,7 +158,15 @@ const MIX = {
 };
 
 // ═══════════════════════════════════════════════════════════════
-// TOTAL USER STAGES
+// TOTAL USER STAGES (all users combined)
+// ═══════════════════════════════════════════════════════════════
+//
+// These define the TOTAL concurrent user count at each stage.
+// Each scenario gets a percentage of these numbers.
+//
+// Example: medium peak = 1,000 total
+//   -> 375 sellers + 375 buyers + 200 browsers + 50 idle
+//
 // ═══════════════════════════════════════════════════════════════
 
 const TOTAL_STAGES = {
@@ -182,15 +203,12 @@ const TOTAL_STAGES = {
     { duration: "10m", target: 10000 },
     { duration: "3m", target: 0 },
   ],
-  // ★ EXTREME — 50,000 VUs in ~5 minutes
-  extreme: [
-    { duration: "1m", target: 10000 },
-    { duration: "1m", target: 50000 },
-    { duration: "2m", target: 50000 },
-    { duration: "1m", target: 0 },
-  ],
 };
 
+/**
+ * Scale stage targets by a ratio (e.g. 0.375 for sellers).
+ * Ensures at least 1 VU per stage (except ramp-down to 0).
+ */
 function scaleStages(stages, ratio) {
   return stages.map((s) => ({
     duration: s.duration,
@@ -216,31 +234,21 @@ const baseThresholds = isBreakpoint ? BREAKPOINT_THRESHOLDS : THRESHOLDS;
 const totalStages = TOTAL_STAGES[stage] || TOTAL_STAGES.smoke;
 const maxTotal = getMaxFromStages(totalStages);
 
-// Messages per VU session — higher for extreme
-const MESSAGES_PER_SESSION = parseInt(
-  __ENV.MESSAGES_PER_SESSION || (stage === "extreme" ? "5" : "3"),
-);
-
-// Message delay between sends — faster for extreme (1s vs 2s)
-const MSG_DELAY_MS = parseInt(
-  __ENV.MSG_DELAY_MS ||
-    (stage === "extreme" ? "1000" : String(TIMING.messageDelayMs)),
-);
+const MESSAGES_PER_SESSION = parseInt(__ENV.MESSAGES_PER_SESSION || "3");
 
 // ── Pair Pool ─────────────────────────────────────────────────
-// Capped at 1000 — matches the seeded DB pairs
-const MAX_SEEDED_PAIRS = 1000;
+// With ramping-vus, exec.vu.idInInstance is GLOBAL (not per-scenario),
+// so seller VU N ≠ buyer VU N. To guarantee overlap, both scenarios
+// index into a small pair pool via (idInInstance % numPairs).
+// numPairs = 1 for ≤20 VUs (all share 1 group — guaranteed delivery).
+// For larger tests it grows with sqrt(sellerVUs) to balance coverage.
 const maxSellerVUs = getMaxFromStages(scaleStages(totalStages, MIX.sellers));
 const NUM_PAIRS =
-  maxTotal <= 20
-    ? 1
-    : Math.min(
-        MAX_SEEDED_PAIRS,
-        Math.max(1, Math.floor(Math.sqrt(maxSellerVUs))),
-      );
+  maxTotal <= 20 ? 1 : Math.max(1, Math.floor(Math.sqrt(maxSellerVUs)));
 
 export const options = {
   scenarios: {
+    // ── 37.5% — Chat Sellers (MessageHub listeners) ──────
     sellers: {
       executor: "ramping-vus",
       exec: "sellerFlow",
@@ -249,15 +257,17 @@ export const options = {
       gracefulRampDown: "10s",
       tags: { role: "seller" },
     },
+    // ── 37.5% — Chat Buyers (MessageHub senders + offers) ─
     buyers: {
       executor: "ramping-vus",
       exec: "buyerFlow",
-      startTime: "3s",
+      startTime: "3s", // Sellers connect first
       stages: scaleStages(totalStages, MIX.buyers),
       gracefulStop: "30s",
       gracefulRampDown: "10s",
       tags: { role: "buyer" },
     },
+    // ── 20% — Browsing (HTTP API requests) ────────────────
     browsers: {
       executor: "ramping-vus",
       exec: "browserFlow",
@@ -266,6 +276,7 @@ export const options = {
       gracefulRampDown: "5s",
       tags: { role: "browser" },
     },
+    // ── 5% — Idle (PresenceHub + Heartbeat) ───────────────
     idle_users: {
       executor: "ramping-vus",
       exec: "idleFlow",
@@ -280,13 +291,10 @@ export const options = {
     // ★ Cross-user delivery
     message_delivery_latency: isBreakpoint
       ? [{ threshold: "p(95)<3000", abortOnFail: true, delayAbortEval: "10s" }]
-      : ["p(95)<2000"],
-    message_content_match: ["rate>0.85"],
-    // ★ Mark-as-read
-    mark_read_latency: ["p(95)<2000"],
-    read_receipt_match: ["rate>0.80"],
-    // Reliability
-    handshake_failures: ["count<50"],
+      : ["p(95)<1500"],
+    message_content_match: ["rate>0.90"],
+    // Handshake reliability
+    handshake_failures: ["count<10"],
     // Browsing
     browse_items_latency: isBreakpoint
       ? [{ threshold: "p(95)<5000", abortOnFail: true, delayAbortEval: "10s" }]
@@ -324,16 +332,13 @@ export function setup() {
   console.log(
     `╔══════════════════════════════════════════════════════════════╗`,
   );
-  console.log(`║  C2C REALISTIC LOAD TEST — FINAL                           ║`);
+  console.log(`║  C2C REALISTIC LOAD TEST — Mixed Traffic Simulation        ║`);
   console.log(
     `╠══════════════════════════════════════════════════════════════╣`,
   );
-  console.log(`║  Server:     ${BASE_URL}`);
+  console.log(`║  Server:    ${BASE_URL}`);
   console.log(
-    `║  Stage:      ${stage} (${fmtNum(maxTotal)} total users, ${NUM_PAIRS} pair pool)`,
-  );
-  console.log(
-    `║  Msgs/VU:    ${MESSAGES_PER_SESSION}  |  Delay: ${MSG_DELAY_MS}ms`,
+    `║  Stage:     ${stage} (${fmtNum(maxTotal)} total users, ${NUM_PAIRS} pair pool)`,
   );
   console.log(`║`);
   console.log(`║  Traffic Distribution:`);
@@ -350,8 +355,6 @@ export function setup() {
   console.log(
     `║  Sellers: ${fmtNum(sellerVUs)}  |  Buyers: ${fmtNum(buyerVUs)}  |  Browsers: ${fmtNum(browserVUs)}  |  Idle: ${fmtNum(idleVUs)}`,
   );
-  console.log(`║`);
-  console.log(`║  ★ Full lifecycle: Send → Deliver → MarkRead → ReadReceipt`);
   console.log(
     `╚══════════════════════════════════════════════════════════════╝`,
   );
@@ -371,10 +374,8 @@ function fmtNum(n) {
 //  ███████║███████╗███████╗███████╗███████╗██║  ██║
 //  ╚══════╝╚══════╝╚══════╝╚══════╝╚══════╝╚═╝  ╚═╝
 //
-//  37.5% — Connect to MessageHub as seller, listen for messages,
-//  verify delivery via CID, then mark messages as read via
-//  SignalR MessageRead() — persists to DB and broadcasts
-//  read receipt back to buyer.
+//  37.5% of VUs — Connect to MessageHub, listen for messages
+//  from the paired buyer. Verify delivery via correlation ID.
 //
 // ═══════════════════════════════════════════════════════════════
 
@@ -386,6 +387,9 @@ export function sellerFlow() {
   const pair = getTestPair(pairIdx);
   const sellerToken = generateToken(pair.seller);
 
+  // Send both query params so server works with either key.
+  // OnConnectedAsync reads recipientUsername first, falls back to user.
+  // Typing() currently only reads user — both are needed until server is patched.
   const queryParams = {
     recipientUsername: pair.buyer.username,
     user: pair.buyer.username,
@@ -398,8 +402,7 @@ export function sellerFlow() {
   let handshakeStart = 0;
   let sessionStart = 0;
   let deliveredCount = 0;
-  const seenCIDs = new Set();
-  const receivedMessageIds = []; // ★ Collect IDs for mark-as-read
+  const seenCIDs = new Set(); // ★ Dedup: track CIDs already counted
 
   const res = ws.connect(wsUrl, null, function (socket) {
     wsConnectingDuration.add(Date.now() - connectStart);
@@ -410,6 +413,7 @@ export function sellerFlow() {
 
       socket.setTimeout(function () {
         if (!handshakeCompleted) {
+          console.error(`[SELLER] vuId ${vuId}: handshake timeout`);
           handshakeFailures.add(1);
           wsErrors.add(1);
           socket.close();
@@ -431,17 +435,17 @@ export function sellerFlow() {
             socket.send(pingMessage());
           }, TIMING.pingIntervalMs);
 
-          // Hold long enough for buyer to send all messages + offer + mark-read
+          // Hold long enough for buyer to send messages + offer
           const holdMs =
-            5000 + (MESSAGES_PER_SESSION + 4) * MSG_DELAY_MS + 15000;
+            4000 + (MESSAGES_PER_SESSION + 3) * TIMING.messageDelayMs + 10000;
           socket.setTimeout(function () {
-            // ★ Before closing: mark all received messages as read
-            doMarkAsRead(socket);
+            socket.close();
           }, holdMs);
           continue;
         }
 
         if (!handshakeCompleted && isHandshakeError(msg)) {
+          console.error(`[SELLER] handshake error: ${msg.error}`);
           handshakeFailures.add(1);
           wsErrors.add(1);
           socket.close();
@@ -465,25 +469,27 @@ export function sellerFlow() {
         }
 
         // ══════════════════════════════════════════════════════
-        // ★ NewMessage from buyer → verify delivery via CID
+        // ★ KEY: NewMessage from buyer → cross-user delivery
+        // Strict CID matching: only count messages meant for
+        // THIS seller VU (pair + scenario VU ID verification)
         // ══════════════════════════════════════════════════════
         if (isEvent(msg, "NewMessage")) {
           const args = msg.arguments || [];
           const payload = args[0] || {};
           const content = payload.content || payload.Content || "";
-          const msgId =
-            payload.id || payload.Id || payload.messageId || payload.MessageId;
 
-          // ★ Collect message ID for mark-as-read
-          if (msgId) receivedMessageIds.push(String(msgId));
-
+          // Extract CID:pairIndex:srcVuId:seq from test messages
           const cidMatch = content.match(/\[CID:(\d+):(\d+):(\d+)\]/);
           if (cidMatch) {
             const [, cidPair, cidSrcVu, cidSeq] = cidMatch;
             const cidKey = `${cidPair}:${cidSrcVu}:${cidSeq}`;
 
-            if (parseInt(cidPair) === pair.pairIndex && !seenCIDs.has(cidKey)) {
+            if (
+              parseInt(cidPair) === pair.pairIndex &&
+              !seenCIDs.has(cidKey) // ★ Dedup: skip already-counted CIDs
+            ) {
               seenCIDs.add(cidKey);
+              // ★ Verified + unique: message is for our pair group
               messagesDelivered.add(1);
               deliveredCount++;
               messageContentMatch.add(1);
@@ -496,11 +502,14 @@ export function sellerFlow() {
               parseInt(cidPair) === pair.pairIndex &&
               seenCIDs.has(cidKey)
             ) {
+              // ★ Duplicate delivery — already counted
               messagesDuplicated.add(1);
             } else {
+              // Message from a different pair group — skip
               messageContentMatch.add(0);
             }
           } else {
+            // Non-test message (system/history) — skip
             messageContentMatch.add(0);
           }
           continue;
@@ -510,33 +519,12 @@ export function sellerFlow() {
         if (isEvent(msg, "OfferStatusChanged")) continue;
         if (isEvent(msg, "InvoiceCreated")) continue;
         if (isEvent(msg, "ChatStatusChanged")) continue;
-        if (isEvent(msg, "MessageRead")) continue; // echo of our own mark-read
         if (msg.type === MSG_TYPE.COMPLETION) continue;
       }
     });
 
-    // ══════════════════════════════════════════════════════════
-    // ★ MARK AS READ — calls SignalR MessageRead() which:
-    //   1. Persists read status to DB (IsRead=true, ReadAt=now)
-    //   2. Broadcasts "MessageRead" event to buyer in the group
-    // ══════════════════════════════════════════════════════════
-    function doMarkAsRead(sock) {
-      if (receivedMessageIds.length > 0) {
-        const markStart = Date.now();
-        sock.send(
-          invocationMessage("MessageRead", [receivedMessageIds, pair.itemId]),
-        );
-        messagesMarkedRead.add(receivedMessageIds.length);
-        markReadLatency.add(Date.now() - markStart);
-      }
-
-      // Close after a short delay to let the server process
-      sock.setTimeout(function () {
-        sock.close();
-      }, 2000);
-    }
-
     socket.on("error", function (e) {
+      console.error(`[SELLER] vuId ${vuId} WS error: ${e.error()}`);
       wsErrors.add(1);
     });
 
@@ -547,9 +535,15 @@ export function sellerFlow() {
     });
   });
 
-  check(res, { "[SELLER] WS 101": (r) => r && r.status === 101 });
-  check(null, { "[SELLER] Handshake OK": () => handshakeCompleted });
-  if (!res || res.status !== 101) wsErrors.add(1);
+  check(res, {
+    "[SELLER] MessageHub WS 101": (r) => r && r.status === 101,
+  });
+  check(null, {
+    "[SELLER] Handshake completed": () => handshakeCompleted,
+  });
+  if (!res || res.status !== 101) {
+    wsErrors.add(1);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -561,9 +555,8 @@ export function sellerFlow() {
 //  ██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║
 //  ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝
 //
-//  37.5% — Connect to MessageHub as buyer, send messages with
-//  CID + timestamp, verify "MessageRead" event comes back from
-//  seller (proves read-status persisted to DB), then create offer.
+//  37.5% of VUs — Connect to MessageHub, send messages with
+//  correlation IDs, create offer, seller accepts.
 //
 // ═══════════════════════════════════════════════════════════════
 
@@ -590,7 +583,6 @@ export function buyerFlow() {
   let msgCount = 0;
   let invocationCounter = 0;
   let offerDone = false;
-  let readReceiptSeen = false; // ★ Track if we got MessageRead back
 
   const res = ws.connect(wsUrl, null, function (socket) {
     wsConnectingDuration.add(Date.now() - connectStart);
@@ -601,6 +593,7 @@ export function buyerFlow() {
 
       socket.setTimeout(function () {
         if (!handshakeCompleted) {
+          console.error(`[BUYER] vuId ${vuId}: handshake timeout`);
           handshakeFailures.add(1);
           wsErrors.add(1);
           socket.close();
@@ -620,7 +613,7 @@ export function buyerFlow() {
 
           socket.setTimeout(function () {
             sendNextMessage(socket);
-          }, MSG_DELAY_MS);
+          }, TIMING.messageDelayMs);
 
           socket.setInterval(function () {
             socket.send(pingMessage());
@@ -629,6 +622,7 @@ export function buyerFlow() {
         }
 
         if (!handshakeCompleted && isHandshakeError(msg)) {
+          console.error(`[BUYER] handshake error: ${msg.error}`);
           handshakeFailures.add(1);
           wsErrors.add(1);
           socket.close();
@@ -652,20 +646,7 @@ export function buyerFlow() {
         }
 
         if (isEvent(msg, "NewMessage")) {
-          // Buyer receives echo — seller counts delivery
-          continue;
-        }
-
-        // ══════════════════════════════════════════════════════
-        // ★ MessageRead — seller marked our messages as read
-        // This proves the DB was updated AND the event broadcast
-        // ══════════════════════════════════════════════════════
-        if (isEvent(msg, "MessageRead")) {
-          if (!readReceiptSeen) {
-            readReceiptSeen = true;
-            readReceiptsReceived.add(1);
-            readReceiptMatch.add(1);
-          }
+          // Buyer receives echo — seller counts delivery, not buyer
           continue;
         }
 
@@ -678,26 +659,23 @@ export function buyerFlow() {
     });
 
     socket.on("error", function (e) {
+      console.error(`[BUYER] VU ${__VU} WS error: ${e.error()}`);
       wsErrors.add(1);
     });
 
     socket.on("close", function () {
-      // ★ If we never received a read receipt, track the miss
-      if (!readReceiptSeen && msgCount > 0) {
-        readReceiptMatch.add(0);
-      }
       if (sessionStart > 0) {
         wsSessionDuration.add(Date.now() - sessionStart);
       }
     });
 
-    // ── Send messages with CID + timestamp ────────────────
+    // ── Send messages with correlation + timestamp ────────
     function sendNextMessage(sock) {
       if (msgCount >= MESSAGES_PER_SESSION) {
         if (!offerDone) {
           sock.setTimeout(function () {
             doOfferLifecycle(sock);
-          }, MSG_DELAY_MS);
+          }, TIMING.messageDelayMs);
         }
         return;
       }
@@ -711,8 +689,9 @@ export function buyerFlow() {
       sock.setTimeout(function () {
         sock.send(invocationMessage("Typing", [false]));
 
+        // ★ Message with correlation ID + timestamp
         const now = Date.now();
-        const content = `[CID:${pair.pairIndex}:${vuId}:${msgCount + 1}] [TS:${now}] Load test message`;
+        const content = `[CID:${pair.pairIndex}:${vuId}:${msgCount + 1}] [TS:${now}] Load test`;
 
         const command = {
           RecipientUsername: pair.seller.username,
@@ -727,8 +706,8 @@ export function buyerFlow() {
 
         sock.setTimeout(function () {
           sendNextMessage(sock);
-        }, MSG_DELAY_MS);
-      }, 300);
+        }, TIMING.messageDelayMs);
+      }, 500);
     }
 
     // ── Offer lifecycle ───────────────────────────────────
@@ -738,28 +717,33 @@ export function buyerFlow() {
       const offerId = createOffer(buyerToken, pair.itemId);
 
       if (offerId === "item-locked") {
-        // Wait for possible read receipt then close
         sock.setTimeout(function () {
           sock.close();
-        }, 5000);
+        }, TIMING.messageDelayMs);
       } else if (offerId) {
         sock.setTimeout(function () {
           acceptOffer(offerId, sellerToken);
           sock.setTimeout(function () {
             sock.close();
-          }, 5000);
-        }, MSG_DELAY_MS);
+          }, TIMING.messageDelayMs * 2);
+        }, TIMING.messageDelayMs);
       } else {
         sock.setTimeout(function () {
           sock.close();
-        }, 5000);
+        }, TIMING.messageDelayMs);
       }
     }
   });
 
-  check(res, { "[BUYER] WS 101": (r) => r && r.status === 101 });
-  check(null, { "[BUYER] Handshake OK": () => handshakeCompleted });
-  if (!res || res.status !== 101) wsErrors.add(1);
+  check(res, {
+    "[BUYER] MessageHub WS 101": (r) => r && r.status === 101,
+  });
+  check(null, {
+    "[BUYER] Handshake completed": () => handshakeCompleted,
+  });
+  if (!res || res.status !== 101) {
+    wsErrors.add(1);
+  }
 
   sleep(Math.random() * 2 + 1);
 }
@@ -773,11 +757,14 @@ export function buyerFlow() {
 //  ██████╔╝██║  ██║╚██████╔╝╚███╔███╔╝███████║███████╗
 //  ╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚══╝╚══╝ ╚══════╝╚══════╝
 //
-//  20% — HTTP-only browsing simulation
+//  20% of VUs — Simulate real users browsing the app.
+//  HTTP-only: browse items, view details, get categories,
+//  banners, search filters, unread count. Think time between.
 //
 // ═══════════════════════════════════════════════════════════════
 
 export function browserFlow() {
+  // Use a loadtest user identity (exists in DB from seed)
   const vuId = exec.vu.idInInstance;
   const pairIdx = (vuId % NUM_PAIRS) + 1;
   const pair = getTestPair(pairIdx);
@@ -787,7 +774,7 @@ export function browserFlow() {
     "Content-Type": "application/json",
   };
 
-  // Step 1: Categories
+  // ── Step 1: Get categories (app initial load) ──────────
   const catRes = http.get(`${BASE_URL}/api/pos/category/GetCategories`, {
     headers,
     tags: { name: "browse-categories" },
@@ -795,11 +782,13 @@ export function browserFlow() {
   browseCategoriesLatency.add(catRes.timings.duration);
   browseRequests.add(1);
   browseErrors.add(catRes.status !== 200 ? 1 : 0);
-  check(catRes, { "[BROWSE] categories 200": (r) => r.status === 200 });
+  check(catRes, {
+    "[BROWSE] categories 200": (r) => r.status === 200,
+  });
 
   thinkTime();
 
-  // Step 2: Banners
+  // ── Step 2: Get banners (home screen) ──────────────────
   const bannerRes = http.get(`${BASE_URL}/api/pos/banners`, {
     headers,
     tags: { name: "browse-banners" },
@@ -809,22 +798,22 @@ export function browserFlow() {
 
   thinkTime();
 
-  // Step 3: Browse items
+  // ── Step 3: Browse items (main listing) ────────────────
   const itemsRes = http.get(
     `${BASE_URL}/api/pos/item?pageSize=20&pageNumber=1`,
-    {
-      headers,
-      tags: { name: "browse-items" },
-    },
+    { headers, tags: { name: "browse-items" } },
   );
   browseItemsLatency.add(itemsRes.timings.duration);
   browseRequests.add(1);
   browseErrors.add(itemsRes.status !== 200 ? 1 : 0);
-  check(itemsRes, { "[BROWSE] items list 200": (r) => r.status === 200 });
+  check(itemsRes, {
+    "[BROWSE] items list 200": (r) => r.status === 200,
+  });
 
   thinkTime();
 
-  // Step 4: View item detail
+  // ── Step 4: View item detail ───────────────────────────
+  //   Use the test pair's own item (guaranteed to exist)
   const detailRes = http.get(`${BASE_URL}/api/pos/item/${pair.itemId}`, {
     headers,
     tags: { name: "view-item-detail" },
@@ -832,11 +821,13 @@ export function browserFlow() {
   viewItemLatency.add(detailRes.timings.duration);
   browseRequests.add(1);
   browseErrors.add(detailRes.status !== 200 ? 1 : 0);
-  check(detailRes, { "[BROWSE] item detail 200": (r) => r.status === 200 });
+  check(detailRes, {
+    "[BROWSE] item detail 200": (r) => r.status === 200,
+  });
 
   thinkTime();
 
-  // Step 5: Governorates
+  // ── Step 5: Get governorates (location data) ───────────
   const locRes = http.get(`${BASE_URL}/api/pos/location/GetGovs`, {
     headers,
     tags: { name: "browse-locations" },
@@ -846,7 +837,7 @@ export function browserFlow() {
 
   thinkTime();
 
-  // Step 6: Search filters
+  // ── Step 6: Get search filters ─────────────────────────
   const filterRes = http.get(`${BASE_URL}/api/public/search/filters`, {
     headers,
     tags: { name: "browse-search-filters" },
@@ -856,7 +847,7 @@ export function browserFlow() {
 
   thinkTime();
 
-  // Step 7: Unread count
+  // ── Step 7: Check unread messages (common in-app poll) ─
   const unreadRes = http.get(`${BASE_URL}/api/pos/messages/unread-count`, {
     headers,
     tags: { name: "browse-unread-count" },
@@ -866,7 +857,7 @@ export function browserFlow() {
 
   thinkTime();
 
-  // Step 8: Profile
+  // ── Step 8: View own profile ───────────────────────────
   const profileRes = http.get(`${BASE_URL}/api/pos/profile`, {
     headers,
     tags: { name: "browse-profile" },
@@ -878,7 +869,7 @@ export function browserFlow() {
 }
 
 function thinkTime() {
-  sleep(1 + Math.random() * 2); // 1-3 seconds
+  sleep(2 + Math.random() * 3); // 2-5 seconds (realistic user behavior)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -890,7 +881,9 @@ function thinkTime() {
 //  ██║██████╔╝███████╗███████╗
 //  ╚═╝╚═════╝ ╚══════╝╚══════╝
 //
-//  5% — PresenceHub + Heartbeat (background app)
+//  5% of VUs — Connected to PresenceHub but mostly inactive.
+//  Sends periodic heartbeats, occasionally checks if another
+//  user is online. Simulates users with the app open in background.
 //
 // ═══════════════════════════════════════════════════════════════
 
@@ -917,6 +910,7 @@ export function idleFlow() {
 
       socket.setTimeout(function () {
         if (!handshakeCompleted) {
+          console.error(`[IDLE] vuId ${vuId}: handshake timeout`);
           handshakeFailures.add(1);
           wsErrors.add(1);
           socket.close();
@@ -935,18 +929,22 @@ export function idleFlow() {
           sessionStart = Date.now();
           idleConnections.add(1);
 
+          // Initial heartbeat
           socket.send(invocationMessage("Heartbeat", []));
           idleHeartbeats.add(1);
 
+          // Periodic heartbeat (keeps Redis presence alive)
           socket.setInterval(function () {
             socket.send(invocationMessage("Heartbeat", []));
             idleHeartbeats.add(1);
           }, TIMING.heartbeatIntervalMs);
 
+          // Periodic ping
           socket.setInterval(function () {
             socket.send(pingMessage());
           }, TIMING.pingIntervalMs);
 
+          // Occasionally check if another user is online
           socket.setTimeout(
             function () {
               const otherPair = getTestPair((vuId % 999) + 2);
@@ -957,6 +955,7 @@ export function idleFlow() {
             10000 + Math.random() * 20000,
           );
 
+          // Hold for 60s (simulate background app)
           socket.setTimeout(function () {
             socket.close();
           }, 60000);
@@ -974,28 +973,40 @@ export function idleFlow() {
           socket.send(pingMessage());
           continue;
         }
+
         if (isClose(msg)) {
           if (msg.error) wsErrors.add(1);
           socket.close();
           return;
         }
+
+        // Idle users may receive notifications (from paired buyers)
         if (msg.type === MSG_TYPE.COMPLETION) continue;
-        if (msg.type === MSG_TYPE.INVOCATION) continue;
+        if (msg.type === MSG_TYPE.INVOCATION) continue; // notifications
       }
     });
 
     socket.on("error", function (e) {
+      console.error(`[IDLE] VU ${__VU} WS error: ${e.error()}`);
       wsErrors.add(1);
     });
 
     socket.on("close", function () {
-      if (sessionStart > 0) wsSessionDuration.add(Date.now() - sessionStart);
+      if (sessionStart > 0) {
+        wsSessionDuration.add(Date.now() - sessionStart);
+      }
     });
   });
 
-  check(res, { "[IDLE] WS 101": (r) => r && r.status === 101 });
-  check(null, { "[IDLE] Handshake OK": () => handshakeCompleted });
-  if (!res || res.status !== 101) wsErrors.add(1);
+  check(res, {
+    "[IDLE] PresenceHub WS 101": (r) => r && r.status === 101,
+  });
+  check(null, {
+    "[IDLE] Handshake completed": () => handshakeCompleted,
+  });
+  if (!res || res.status !== 101) {
+    wsErrors.add(1);
+  }
 
   sleep(Math.random() * 3 + 1);
 }
@@ -1083,6 +1094,7 @@ function acceptOffer(offerId, token) {
     offersFailed.add(1);
     return false;
   }
+
   offersAccepted.add(1);
   return true;
 }
