@@ -623,6 +623,207 @@ function buildMetricDefinitions(scenarioName) {
       },
     ],
   };
+
+  defs["realistic-load"] = [
+    // ── Chat Delivery (star metrics) ──
+    {
+      key: "ws_connecting_duration",
+      label: "WS Connect Duration",
+      type: "trend",
+      unit: "ms",
+      desc: "TCP + TLS WebSocket connection time",
+      group: "chat",
+    },
+    {
+      key: "ws_handshake_duration",
+      label: "SignalR Handshake",
+      type: "trend",
+      unit: "ms",
+      desc: "SignalR protocol handshake time",
+      group: "chat",
+    },
+    {
+      key: "ws_errors",
+      label: "WebSocket Errors",
+      type: "rate",
+      desc: "Failed WS connections across all roles",
+      group: "chat",
+    },
+    {
+      key: "handshake_failures",
+      label: "Handshake Failures",
+      type: "counter",
+      desc: "SignalR handshakes that timed out or errored",
+      group: "chat",
+    },
+    {
+      key: "ws_reconnects",
+      label: "WS Reconnects",
+      type: "counter",
+      desc: "VU re-connections after WS drop (iteration > 0)",
+      group: "chat",
+    },
+    {
+      key: "ws_session_duration",
+      label: "Session Duration",
+      type: "trend",
+      unit: "ms",
+      desc: "WebSocket session lifetime",
+      group: "chat",
+    },
+    {
+      key: "messages_sent",
+      label: "Messages Sent (Buyers)",
+      type: "counter",
+      desc: "Messages sent via SendMessage",
+      group: "chat",
+    },
+    {
+      key: "messages_delivered",
+      label: "Messages Delivered (Sellers)",
+      type: "counter",
+      desc: "NewMessage events received by sellers",
+      group: "chat",
+    },
+    {
+      key: "message_delivery_latency",
+      label: "★ Cross-User Latency",
+      type: "trend",
+      unit: "ms",
+      desc: "Buyer send → Seller receive (true cross-user)",
+      group: "chat",
+    },
+    {
+      key: "message_content_match",
+      label: "★ Content Match Rate",
+      type: "rate",
+      desc: "Messages with verified correlation ID",
+      group: "chat",
+    },
+    {
+      key: "message_thread_received",
+      label: "Thread History Loaded",
+      type: "counter",
+      desc: "ReceiveMessageThread events",
+      group: "chat",
+    },
+    {
+      key: "messages_duplicated",
+      label: "Duplicate Deliveries",
+      type: "counter",
+      desc: "Same CID delivered more than once (server retries)",
+      group: "chat",
+    },
+    // ── Offers ──
+    {
+      key: "offer_creation_latency",
+      label: "Offer Creation Latency",
+      type: "trend",
+      unit: "ms",
+      desc: "REST API — create offer",
+      group: "offers",
+    },
+    {
+      key: "offer_accept_latency",
+      label: "Offer Accept Latency",
+      type: "trend",
+      unit: "ms",
+      desc: "REST API — accept offer",
+      group: "offers",
+    },
+    {
+      key: "offers_created",
+      label: "Offers Created",
+      type: "counter",
+      desc: "Successfully created offers",
+      group: "offers",
+    },
+    {
+      key: "offers_accepted",
+      label: "Offers Accepted",
+      type: "counter",
+      desc: "Successfully accepted offers",
+      group: "offers",
+    },
+    {
+      key: "offers_failed",
+      label: "Offers Failed",
+      type: "counter",
+      desc: "Failed offer operations",
+      group: "offers",
+    },
+    // ── Browsing ──
+    {
+      key: "browse_items_latency",
+      label: "Browse Items Latency",
+      type: "trend",
+      unit: "ms",
+      desc: "GET /api/pos/item (paginated listing)",
+      group: "browse",
+    },
+    {
+      key: "view_item_latency",
+      label: "View Item Latency",
+      type: "trend",
+      unit: "ms",
+      desc: "GET /api/pos/item/{id} (detail page)",
+      group: "browse",
+    },
+    {
+      key: "browse_categories_latency",
+      label: "Categories Latency",
+      type: "trend",
+      unit: "ms",
+      desc: "GET /api/pos/category/GetCategories",
+      group: "browse",
+    },
+    {
+      key: "browse_requests",
+      label: "Browse Requests",
+      type: "counter",
+      desc: "Total HTTP requests from browsers",
+      group: "browse",
+    },
+    {
+      key: "browse_errors",
+      label: "Browse Error Rate",
+      type: "rate",
+      desc: "Failed browse HTTP requests",
+      group: "browse",
+    },
+    // ── Idle ──
+    {
+      key: "idle_connections",
+      label: "Idle Connections",
+      type: "counter",
+      desc: "PresenceHub connections from idle users",
+      group: "idle",
+    },
+    {
+      key: "idle_heartbeats",
+      label: "Idle Heartbeats",
+      type: "counter",
+      desc: "Heartbeat() calls from idle users",
+      group: "idle",
+    },
+    // ── Global HTTP ──
+    {
+      key: "http_req_duration",
+      label: "HTTP Request Duration",
+      type: "trend",
+      unit: "ms",
+      desc: "All HTTP requests (browse + offers)",
+      group: "global",
+    },
+    {
+      key: "http_req_failed",
+      label: "HTTP Failure Rate",
+      type: "rate",
+      desc: "Overall HTTP failure rate",
+      group: "global",
+    },
+  ];
+
   return defs[scenarioName] || [];
 }
 
@@ -680,12 +881,19 @@ function computeThroughput(data, scenarioName, durationSec) {
     }
   }
 
-  if (scenarioName === "chat-offers") {
+  if (scenarioName === "chat-offers" || scenarioName === "realistic-load") {
     const sent = extractMetric(data, "messages_sent");
     if (sent && sent.count) {
       items.push({
         label: "Messages / sec (sent)",
         value: fmt(sent.count / durationSec, 1),
+      });
+    }
+    const delivered = extractMetric(data, "messages_delivered");
+    if (delivered && delivered.count) {
+      items.push({
+        label: "Messages / sec (delivered)",
+        value: fmt(delivered.count / durationSec, 1),
       });
     }
     const created = extractMetric(data, "offers_created");
@@ -701,6 +909,15 @@ function computeThroughput(data, scenarioName, durationSec) {
         label: "Offers / sec (accepted)",
         value: fmt(accepted.count / durationSec, 1),
       });
+    }
+    if (scenarioName === "realistic-load") {
+      const browseReqs = extractMetric(data, "browse_requests");
+      if (browseReqs && browseReqs.count) {
+        items.push({
+          label: "Browse Requests / sec",
+          value: fmt(browseReqs.count / durationSec, 1),
+        });
+      }
     }
   }
 
@@ -749,7 +966,11 @@ function generateRecommendations(data, scenarioName, thresholdResults) {
     });
   }
 
-  if (scenarioName === "message-hub" || scenarioName === "full-flow") {
+  if (
+    scenarioName === "message-hub" ||
+    scenarioName === "full-flow" ||
+    scenarioName === "realistic-load"
+  ) {
     const latency = extractMetric(data, "message_delivery_latency");
     if (latency && latency["p(95)"] > 2000) {
       recs.push({
@@ -759,15 +980,80 @@ function generateRecommendations(data, scenarioName, thresholdResults) {
     }
 
     const sent = extractMetric(data, "messages_sent");
-    const recv = extractMetric(data, "messages_received");
+    const recv = extractMetric(
+      data,
+      scenarioName === "realistic-load"
+        ? "messages_delivered"
+        : "messages_received",
+    );
     if (sent && recv && sent.count > 0) {
       const deliveryRate = recv.count / sent.count;
       if (deliveryRate < 0.9) {
         recs.push({
           severity: "critical",
-          text: `Message delivery ratio is ${fmtRate(deliveryRate)} (${fmtCount(recv.count)} received / ${fmtCount(sent.count)} sent). Messages are being lost.`,
+          text: `Message delivery ratio is ${fmtRate(deliveryRate)} (${fmtCount(recv.count)} delivered / ${fmtCount(sent.count)} sent). Messages are being lost — check Redis backplane and SignalR group routing.`,
         });
       }
+    }
+  }
+
+  if (scenarioName === "realistic-load") {
+    const browseErr = extractMetric(data, "browse_errors");
+    if (browseErr && browseErr.rate > 0.05) {
+      recs.push({
+        severity: "critical",
+        text: `Browse error rate is ${fmtRate(browseErr.rate)}. REST API endpoints are failing under mixed load — database or API may be saturated.`,
+      });
+    } else if (browseErr && browseErr.rate > 0.01) {
+      recs.push({
+        severity: "warning",
+        text: `Browse error rate is ${fmtRate(browseErr.rate)}. Some REST endpoints are returning errors under load.`,
+      });
+    }
+
+    const browseLat = extractMetric(data, "browse_items_latency");
+    if (browseLat && browseLat["p(95)"] > 3000) {
+      recs.push({
+        severity: "warning",
+        text: `Browse items p(95) is ${fmtMs(browseLat["p(95)"])}. Item listing queries may need optimization or caching.`,
+      });
+    }
+
+    const contentMatch = extractMetric(data, "message_content_match");
+    if (contentMatch && contentMatch.rate < 0.9) {
+      recs.push({
+        severity: "critical",
+        text: `Content match rate is ${fmtRate(contentMatch.rate)}. Messages are not arriving with correct content — SignalR routing or serialization issue.`,
+      });
+    }
+
+    const hsFails = extractMetric(data, "handshake_failures");
+    if (hsFails && hsFails.count > 10) {
+      recs.push({
+        severity: "critical",
+        text: `${fmtCount(hsFails.count)} handshake failures detected. SignalR auth/DataProtection keys or sticky sessions may be misconfigured.`,
+      });
+    } else if (hsFails && hsFails.count > 0) {
+      recs.push({
+        severity: "warning",
+        text: `${fmtCount(hsFails.count)} handshake failure(s). May indicate intermittent auth or connection issues under load.`,
+      });
+    }
+
+    const reconnects = extractMetric(data, "ws_reconnects");
+    if (reconnects && reconnects.count > 50) {
+      recs.push({
+        severity: "warning",
+        text: `${fmtCount(reconnects.count)} WebSocket reconnections. Connections are dropping and VUs are re-establishing — possible server memory pressure or Redis backplane issues.`,
+      });
+    }
+
+    const dupes = extractMetric(data, "messages_duplicated");
+    if (dupes && dupes.count > 0) {
+      recs.push({
+        severity: dupes.count > 20 ? "warning" : "info",
+        text: `${fmtCount(dupes.count)} duplicate message deliveries detected (same CID received twice). May indicate SignalR retry or group membership overlap.`,
+      });
     }
   }
 
@@ -809,6 +1095,7 @@ function scenarioLabel(name) {
     "presence-stress": "Presence Stress — Redis Tracking",
     "notification-broadcast": "Notification Broadcast — Event Delivery",
     "chat-offers": "Chat + Offers — Full Lifecycle",
+    "realistic-load": "Realistic Load — Mixed Traffic Simulation",
   };
   return labels[name] || name;
 }
@@ -825,6 +1112,7 @@ function scenarioLabel(name) {
 export function generateReport(data, opts) {
   const scenario = opts.scenario;
   const stageName = opts.stage || "smoke";
+  const trafficMix = opts.trafficMix || null;
   const now = new Date().toISOString();
   // k6's JS runtime doesn't support toLocaleString with options
   const d = new Date();
@@ -844,7 +1132,9 @@ export function generateReport(data, opts) {
   ];
   const nowDisplay = `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}, ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
 
-  const maxVUs = getMaxVUsFromStage(stageName);
+  const maxVUs = trafficMix
+    ? trafficMix.reduce((sum, t) => sum + (t.vus || 0), 0)
+    : getMaxVUsFromStage(stageName);
   const plannedDurationSec = getStageDuration(stageName);
   // Use actual test duration when available (important for breakpoint tests
   // that abort early). Fall back to planned stage duration.
@@ -982,6 +1272,8 @@ export function generateReport(data, opts) {
   </div>
 </div>
 
+${trafficMix ? buildTrafficMixSection(trafficMix) : ""}
+
 <!-- ═══ EXECUTIVE SUMMARY ══════════════════════════════════ -->
 <h2>Executive Summary</h2>
 <div class="card-grid">
@@ -1086,8 +1378,8 @@ ${buildChecksSection(data)}
   // Return both HTML and JSON files, plus text summary to stdout
   const reportBaseName = `${scenario}_${stageName}`;
   return {
-    [`./results/${reportBaseName}_report.html`]: html,
-    [`./results/${reportBaseName}_report.json`]: JSON.stringify(
+    [`./load-tests/results/${reportBaseName}_report.html`]: html,
+    [`./load-tests/results/${reportBaseName}_report.json`]: JSON.stringify(
       jsonSummary,
       null,
       2,
@@ -1101,6 +1393,7 @@ ${buildChecksSection(data)}
       recs,
       data,
       metricDefs,
+      trafficMix,
     ),
   };
 }
@@ -1116,6 +1409,7 @@ function buildTextSummary(
   recs,
   data,
   metricDefs,
+  trafficMix,
 ) {
   const lines = [];
   lines.push("");
@@ -1138,6 +1432,25 @@ function buildTextSummary(
     "╚══════════════════════════════════════════════════════════════╝",
   );
   lines.push("");
+
+  // Traffic mix
+  if (trafficMix && trafficMix.length > 0) {
+    lines.push(
+      "─── Traffic Distribution ─────────────────────────────────────",
+    );
+    const total = trafficMix.reduce((s, t) => s + (t.vus || 0), 0);
+    for (const t of trafficMix) {
+      const pct = total > 0 ? ((t.vus / total) * 100).toFixed(1) : "0.0";
+      const bar = "█".repeat(Math.round(t.percentage / 2.5));
+      lines.push(
+        `  ${t.label.padEnd(20)} ${bar.padEnd(32)} ${pct.padStart(5)}% (${fmtCount(t.vus)} VUs)`,
+      );
+    }
+    lines.push(
+      `${"".padStart(2)}${"".padEnd(20)} Total: ${fmtCount(total)} VUs`,
+    );
+    lines.push("");
+  }
 
   // Thresholds
   lines.push("─── Thresholds ──────────────────────────────────────────────");
@@ -1183,7 +1496,7 @@ function buildTextSummary(
     lines.push(`  ${prefix} ${r.text}`);
   }
   lines.push("");
-  lines.push("─── Report files saved to ./results/ directory ─────────────");
+  lines.push("─── Report files saved to ./load-tests/results/ directory ───");
   lines.push("");
 
   return lines.join("\n");
@@ -1232,21 +1545,35 @@ function buildExecutiveSummaryCards(data, scenario) {
   }
 
   // Scenario-specific
-  if (scenario === "message-hub" || scenario === "full-flow") {
+  if (
+    scenario === "message-hub" ||
+    scenario === "full-flow" ||
+    scenario === "realistic-load"
+  ) {
     const lat = extractMetric(data, "message_delivery_latency");
     if (lat) {
-      const color = lat["p(95)"] < 2000 ? "var(--pass)" : "var(--fail)";
+      const color =
+        lat["p(95)"] < 1500
+          ? "var(--pass)"
+          : lat["p(95)"] < 3000
+            ? "var(--warn)"
+            : "var(--fail)";
       cards.push(
         statCard(
-          "Msg Delivery p95",
+          "★ Delivery p95",
           fmtMs(lat["p(95)"]),
-          "SendMessage → completion",
+          "Buyer send → Seller receive",
           color,
         ),
       );
     }
     const sent = extractMetric(data, "messages_sent");
-    const recv = extractMetric(data, "messages_received");
+    const recv = extractMetric(
+      data,
+      scenario === "realistic-load"
+        ? "messages_delivered"
+        : "messages_received",
+    );
     if (sent && recv) {
       const ratio = sent.count > 0 ? recv.count / sent.count : 0;
       const color =
@@ -1257,9 +1584,65 @@ function buildExecutiveSummaryCards(data, scenario) {
             : "var(--fail)";
       cards.push(
         statCard(
-          "Delivery Ratio",
+          "★ Delivery Ratio",
           fmtRate(ratio),
           `${fmtCount(recv.count)} / ${fmtCount(sent.count)}`,
+          color,
+        ),
+      );
+    }
+  }
+
+  if (scenario === "realistic-load") {
+    const browseLat = extractMetric(data, "browse_items_latency");
+    if (browseLat) {
+      const color = browseLat["p(95)"] < 3000 ? "var(--pass)" : "var(--warn)";
+      cards.push(
+        statCard(
+          "Browse p95",
+          fmtMs(browseLat["p(95)"]),
+          "Item listing API",
+          color,
+        ),
+      );
+    }
+    const browseErr = extractMetric(data, "browse_errors");
+    if (browseErr) {
+      const color =
+        browseErr.rate < 0.01
+          ? "var(--pass)"
+          : browseErr.rate < 0.05
+            ? "var(--warn)"
+            : "var(--fail)";
+      cards.push(
+        statCard(
+          "Browse Errors",
+          fmtRate(browseErr.rate),
+          "REST API failure rate",
+          color,
+        ),
+      );
+    }
+    const hsFails = extractMetric(data, "handshake_failures");
+    if (hsFails && hsFails.count > 0) {
+      const color = hsFails.count < 5 ? "var(--warn)" : "var(--fail)";
+      cards.push(
+        statCard(
+          "HS Failures",
+          fmtCount(hsFails.count),
+          "Handshake timeouts/errors",
+          color,
+        ),
+      );
+    }
+    const reconnects = extractMetric(data, "ws_reconnects");
+    if (reconnects && reconnects.count > 0) {
+      const color = reconnects.count < 20 ? "var(--warn)" : "var(--fail)";
+      cards.push(
+        statCard(
+          "Reconnects",
+          fmtCount(reconnects.count),
+          "WS re-connections",
           color,
         ),
       );
@@ -1436,6 +1819,34 @@ function collectChecks(group, arr) {
       collectChecks(sub, arr);
     }
   }
+}
+
+function buildTrafficMixSection(mix) {
+  if (!mix || mix.length === 0) return "";
+  const total = mix.reduce((s, t) => s + (t.vus || 0), 0);
+  let html = `
+<!-- ═══ TRAFFIC MIX ════════════════════════════════════════ -->
+<h2>Traffic Distribution</h2>
+<div class="card">
+  <div style="display:flex;height:36px;border-radius:6px;overflow:hidden;margin-bottom:16px">`;
+  for (const t of mix) {
+    const pct = total > 0 ? ((t.vus / total) * 100).toFixed(1) : 0;
+    html += `\n    <div style="flex:${t.vus};background:${t.color};display:flex;align-items:center;justify-content:center;font-size:0.7rem;font-weight:700;color:#000;min-width:40px" title="${escHtml(t.label)}: ${pct}%">${pct}%</div>`;
+  }
+  html += `\n  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px">`;
+  for (const t of mix) {
+    html += `\n    <div style="display:flex;align-items:center;gap:8px">
+      <div style="width:12px;height:12px;border-radius:3px;background:${t.color};flex-shrink:0"></div>
+      <div>
+        <div style="font-weight:600;font-size:0.82rem">${escHtml(t.label)}</div>
+        <div style="color:var(--text2);font-size:0.72rem">${t.percentage.toFixed(1)}% — ${fmtCount(t.vus)} VUs</div>
+      </div>
+    </div>`;
+  }
+  html += `\n  </div>
+</div>`;
+  return html;
 }
 
 function escHtml(str) {

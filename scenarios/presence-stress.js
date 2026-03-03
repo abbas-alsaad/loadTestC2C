@@ -47,7 +47,6 @@ import {
 } from "../config.js";
 import { generateToken } from "../helpers/jwt.js";
 import {
-  negotiate,
   buildWsUrl,
   handshakeMessage,
   invocationMessage,
@@ -130,22 +129,10 @@ export default function () {
   // Each VU gets a stable identity based on its VU number
   const { userId, username, token } = getStableIdentity(__VU);
 
-  // 1. Negotiate
-  const negotiateResult = negotiate(HUBS.presence, token);
-  if (!negotiateResult) {
-    wsErrors.add(1);
-    sleep(1);
-    return;
-  }
+  // Direct WebSocket connect (skipNegotiation — no negotiate round-trip)
+  const wsUrl = buildWsUrl(HUBS.presence, token);
 
-  // 2. Build WebSocket URL
-  const wsUrl = buildWsUrl(
-    HUBS.presence,
-    token,
-    negotiateResult.connectionToken,
-  );
-
-  // 3. Connect
+  // Connect
   const connectStart = Date.now();
   let handshakeCompleted = false;
   let handshakeStart = 0;

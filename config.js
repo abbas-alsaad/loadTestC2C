@@ -9,10 +9,19 @@
 
 // ─── Environment ──────────────────────────────────────────────
 export const BASE_URL = __ENV.TARGET_URL || "https://c2c-api.gini.iq";
-export const WS_URL = BASE_URL.replace("https://", "wss://").replace(
-  "http://",
-  "ws://",
-);
+
+// SignalR URL — CloudFront VPC Origins don't support WebSocket,
+// so ALL SignalR traffic (negotiate + WS) goes directly to the ALB.
+// Both negotiate and WS must hit the same backend so the connection
+// token created by negotiate is valid for the WS upgrade.
+const signalrBase = __ENV.WS_URL || BASE_URL;
+export const SIGNALR_HTTP_URL = signalrBase
+  .replace("wss://", "https://")
+  .replace("ws://", "http://");
+export const WS_URL = signalrBase
+  .replace("https://", "wss://")
+  .replace("http://", "ws://");
+
 // Use /health/live for local (avoids Redis timeout), /health for UAT
 export const HEALTH_URL = __ENV.HEALTH_URL || `${BASE_URL}/health/live`;
 

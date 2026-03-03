@@ -32,7 +32,6 @@ import {
 } from "../config.js";
 import { generateVuIdentity } from "../helpers/jwt.js";
 import {
-  negotiate,
   buildWsUrl,
   handshakeMessage,
   invocationMessage,
@@ -87,26 +86,11 @@ export default function () {
   // 1. Generate unique identity for this VU
   const { userId, username, token } = generateVuIdentity(__VU, __ITER);
 
-  // 2. Negotiate
-  const negotiateResult = negotiate(HUBS.presence, token);
-  if (!negotiateResult) {
-    wsErrors.add(1);
-    sleep(1);
-    return;
-  }
+  // 2. Direct WebSocket connect (skipNegotiation — no negotiate round-trip)
+  const wsUrl = buildWsUrl(HUBS.presence, token);
+  if (__VU <= 2) console.log(`VU ${__VU} wsUrl: ${wsUrl.substring(0, 120)}...`);
 
-  // 3. Build WebSocket URL
-  const wsUrl = buildWsUrl(
-    HUBS.presence,
-    token,
-    negotiateResult.connectionToken,
-  );
-  if (__VU <= 2)
-    console.log(
-      `VU ${__VU} negotiate OK, wsUrl: ${wsUrl.substring(0, 120)}...`,
-    );
-
-  // 4. Connect and run WebSocket session
+  // 3. Connect and run WebSocket session
   const connectStart = Date.now();
   let handshakeCompleted = false;
   let handshakeStart = 0;

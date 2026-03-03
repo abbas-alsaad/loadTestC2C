@@ -7,7 +7,7 @@
 
 import http from "k6/http";
 import { check } from "k6";
-import { BASE_URL, WS_URL, HUBS, TIMING } from "../config.js";
+import { BASE_URL, SIGNALR_HTTP_URL, WS_URL, HUBS, TIMING } from "../config.js";
 
 // SignalR uses ASCII Record Separator (0x1E) as message delimiter
 export const RECORD_SEPARATOR = "\x1e";
@@ -28,13 +28,19 @@ export const MSG_TYPE = {
 /**
  * Perform SignalR negotiate handshake over HTTP.
  *
+ * NOTE: Not used when skipNegotiation is enabled (direct WebSocket).
+ * Kept for reference / fallback if negotiate is ever re-enabled.
+ *
  * @param {string} hubPath - e.g. '/hubs/presence'
  * @param {string} token   - JWT token
  * @param {object} [queryParams] - Additional query params (e.g. { user: 'bob', itemId: '...' })
  * @returns {{ connectionId: string, connectionToken: string, negotiateVersion: number } | null}
  */
 export function negotiate(hubPath, token, queryParams) {
-  let url = `${BASE_URL}${hubPath}/negotiate?negotiateVersion=1`;
+  // Use SIGNALR_HTTP_URL so negotiate hits the same ALB as WebSocket.
+  // The connection token is server-specific — negotiate and WS must
+  // go to the same backend, otherwise the WS upgrade returns 404.
+  let url = `${SIGNALR_HTTP_URL}${hubPath}/negotiate?negotiateVersion=1`;
 
   if (queryParams) {
     for (const [k, v] of Object.entries(queryParams)) {

@@ -63,7 +63,6 @@ import {
 import { generateToken } from "../helpers/jwt.js";
 import { getTestPair } from "../helpers/test-data.js";
 import {
-  negotiate,
   buildWsUrl,
   handshakeMessage,
   invocationMessage,
@@ -159,19 +158,8 @@ export function sellerFlow() {
   const pair = getTestPair(__VU);
   const seller = { ...pair.seller, token: generateToken(pair.seller) };
 
-  // Connect to PresenceHub (go online)
-  const presNeg = negotiate(HUBS.presence, seller.token);
-  if (!presNeg) {
-    wsErrors.add(1);
-    sleep(1);
-    return;
-  }
-
-  const presWsUrl = buildWsUrl(
-    HUBS.presence,
-    seller.token,
-    presNeg.connectionToken,
-  );
+  // Direct WebSocket connect to PresenceHub (skipNegotiation)
+  const presWsUrl = buildWsUrl(HUBS.presence, seller.token);
 
   const connectStart = Date.now();
   let sessionStart = 0;
@@ -273,19 +261,8 @@ export function buyerFlow() {
   const buyer = { ...pair.buyer, token: generateToken(pair.buyer) };
   const itemId = pair.itemId;
 
-  // Step 1: Connect to PresenceHub
-  const presNeg = negotiate(HUBS.presence, buyer.token);
-  if (!presNeg) {
-    wsErrors.add(1);
-    sleep(1);
-    return;
-  }
-
-  const presWsUrl = buildWsUrl(
-    HUBS.presence,
-    buyer.token,
-    presNeg.connectionToken,
-  );
+  // Step 1: Connect to PresenceHub (skipNegotiation)
+  const presWsUrl = buildWsUrl(HUBS.presence, buyer.token);
 
   let sellerIsOnline = false;
 
@@ -378,21 +355,9 @@ export function buyerFlow() {
     "Buyer PresenceHub WS 101": (r) => r && r.status === 101,
   });
 
-  // Step 2: Connect to MessageHub
+  // Step 2: Connect to MessageHub (skipNegotiation)
   const queryParams = { user: seller.username, itemId: itemId };
-  const msgNeg = negotiate(HUBS.message, buyer.token, queryParams);
-  if (!msgNeg) {
-    wsErrors.add(1);
-    sleep(1);
-    return;
-  }
-
-  const msgWsUrl = buildWsUrl(
-    HUBS.message,
-    buyer.token,
-    msgNeg.connectionToken,
-    queryParams,
-  );
+  const msgWsUrl = buildWsUrl(HUBS.message, buyer.token, null, queryParams);
 
   const connectStart = Date.now();
   const pendingInvocations = {};
