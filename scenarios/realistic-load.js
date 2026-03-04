@@ -494,10 +494,11 @@ export function sellerFlow() {
             socket.send(pingMessage());
           }, TIMING.pingIntervalMs);
 
-          // ★ Max session duration — reduced from 42s to 25s for faster iteration cycling
-          //   This helps seller iterations sync better with buyer iterations
-          const holdMs =
-            3000 + (MESSAGES_PER_SESSION + 2) * MSG_DELAY_MS + 12000;
+          // ★ Max session duration — MATCH BUYER SESSION (~17s)
+          //   Buyer: MSG_DELAY_MS*3 + typing + 8s wait = ~17s
+          //   Seller needs same length to stay synchronized across iterations
+          const holdMs = 2000 + MESSAGES_PER_SESSION * MSG_DELAY_MS + 8000;
+          // = 2000 + 3*2000 + 8000 = 16000ms ≈ buyer session
           socket.setTimeout(function () {
             if (!markReadDone) doMarkAsRead(socket);
             else socket.close();
@@ -692,6 +693,12 @@ export function buyerFlow() {
   const vuId = exec.vu.idInInstance;
   const pairIdx = (vuId % NUM_PAIRS) + 1;
   if (exec.vu.iterationInInstance > 0) wsReconnects.add(1);
+
+  // ★ Wait for seller to connect first (especially after iteration 1)
+  //   Sellers need time to establish connection before buyers send messages
+  if (exec.vu.iterationInInstance > 0) {
+    sleep(2 + Math.random()); // 2-3s delay on subsequent iterations
+  }
 
   const pair = getTestPair(pairIdx);
   const buyerToken = generateToken(pair.buyer);
