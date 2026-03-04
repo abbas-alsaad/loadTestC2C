@@ -219,7 +219,13 @@ function getMaxFromStages(stages) {
 
 const stage = __ENV.STAGE || "smoke";
 const isBreakpoint = stage === "breakpoint";
-const isStress = ["high", "extreme", "massive", "extremeSmall"].includes(stage);
+const isStress = [
+  "medium",
+  "high",
+  "extreme",
+  "massive",
+  "extremeSmall",
+].includes(stage);
 const baseThresholds = isBreakpoint ? BREAKPOINT_THRESHOLDS : THRESHOLDS;
 const totalStages = TOTAL_STAGES[stage] || TOTAL_STAGES.smoke;
 const maxTotal = getMaxFromStages(totalStages);
