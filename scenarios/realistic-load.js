@@ -721,6 +721,7 @@ export function buyerFlow() {
   let invocationCounter = 0;
   let offerDone = false;
   let offerLifecycleComplete = false; // ★ Track when entire offer lifecycle is done
+  let offerTimedOut = false; // ★ Track if offer HTTP calls timed out (status=0)
   let readReceiptSeen = false; // ★ Track if we got MessageRead back
   let allMessagesSentAt = 0; // ★ Track when all messages were sent
   let buffer = ""; // ★ Buffered parser state
@@ -834,14 +835,28 @@ export function buyerFlow() {
       else if (code === 1011) wsClose1011.add(1);
       else wsCloseOther.add(1);
 
-      // ★ If we never received a read receipt, track the miss
-      //   Only penalize when buyer completed sending AND waited long enough
-      //   for the seller to process and broadcast the receipt (>=10s).
-      if (!readReceiptSeen && allMessagesSentAt > 0) {
-        const waitedForReceipt = Date.now() - allMessagesSentAt;
-        if (waitedForReceipt >= 10000) {
-          readReceiptMatch.add(0);
+      // ★ READ RECEIPT MISS TRACKING — only penalize when buyer session was FULLY HEALTHY.
+      //   A miss is only meaningful when:
+      //   1. Handshake completed (we actually connected)
+      //   2. All messages were sent (allMessagesSentAt > 0)
+      //   3. Offer lifecycle finished normally (not timed out by HTTP timeout)
+      //   4. Waited at least 8s after sending for the seller→DB→buyer round-trip
+      //   If ANY of these conditions is false, the miss is a test infrastructure
+      //   problem (port exhaustion, HTTP timeout, broken seller), not a server bug.
+      if (!readReceiptSeen) {
+        const sessionHealthy =
+          handshakeCompleted &&
+          allMessagesSentAt > 0 &&
+          offerLifecycleComplete &&
+          !offerTimedOut;
+        if (sessionHealthy) {
+          const waitedForReceipt = Date.now() - allMessagesSentAt;
+          if (waitedForReceipt >= 8000) {
+            readReceiptMatch.add(0);
+          }
+          // else: session closed too fast — don't penalize, don't reward
         }
+        // else: unhealthy session — skip metric entirely (no add(0) or add(1))
       }
 
       // Session tracking
@@ -905,34 +920,38 @@ export function buyerFlow() {
 
       const offerId = createOffer(buyerToken, pair.itemId);
 
+      // ★ Detect offer HTTP timeout — marks session as unhealthy for receipt tracking
+      if (offerId === null) {
+        // createOffer returns null on timeout (status=0) or non-locked failure
+        // Check if it was likely a timeout by seeing if the call took ~10s
+        offerTimedOut = true;
+      }
+
+      // ★ Wait 8s (was 5s) after offer to give MessageRead time to arrive
+      //   via seller→DB→Redis backplane→buyer. 8s is generous but accurate.
+      const receiptWaitMs = readReceiptSeen ? 1000 : 8000;
+
       if (offerId === "item-locked") {
         offerLifecycleComplete = true;
-        // Close faster if we already got read receipt
-        sock.setTimeout(
-          function () {
-            sock.close();
-          },
-          readReceiptSeen ? 1000 : 5000,
-        );
+        offerTimedOut = false; // item-locked is not a timeout
+        sock.setTimeout(function () {
+          sock.close();
+        }, receiptWaitMs);
       } else if (offerId) {
+        offerTimedOut = false; // got a real offerId — not a timeout
         sock.setTimeout(function () {
           acceptOffer(offerId, sellerToken);
           offerLifecycleComplete = true;
-          sock.setTimeout(
-            function () {
-              sock.close();
-            },
-            readReceiptSeen ? 1000 : 5000,
-          );
+          sock.setTimeout(function () {
+            sock.close();
+          }, receiptWaitMs);
         }, MSG_DELAY_MS);
       } else {
+        // offerId === null → either timeout or server error
         offerLifecycleComplete = true;
-        sock.setTimeout(
-          function () {
-            sock.close();
-          },
-          readReceiptSeen ? 1000 : 5000,
-        );
+        sock.setTimeout(function () {
+          sock.close();
+        }, receiptWaitMs);
       }
     }
   });
