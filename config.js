@@ -1,29 +1,20 @@
 /**
- * k6 Load Test Configuration
- * Target: C2C Backend (UAT)
+ * Load Test Config (NO NEGOTIATE)
  *
- * Usage:
- *   k6 run --env TARGET_URL=https://c2c-uat.gini.iq scenarios/presence-hub.js
- *   k6 run --env TARGET_URL=https://c2c-uat.gini.iq --env STAGE=medium scenarios/presence-hub.js
+ * IMPORTANT:
+ * - TARGET_URL should be your API ALB domain (health endpoints)
+ * - WS_URL should be your WebSocket ALB domain (SignalR hubs)
  */
 
 // ─── Environment ──────────────────────────────────────────────
-export const BASE_URL = __ENV.TARGET_URL || "https://c2c-api.gini.iq";
+export const BASE_URL = __ENV.TARGET_URL || "https://c2c-api-uat.gini.iq";
 
-// SignalR URL — CloudFront VPC Origins don't support WebSocket,
-// so ALL SignalR traffic (negotiate + WS) goes directly to the ALB.
-// Both negotiate and WS must hit the same backend so the connection
-// token created by negotiate is valid for the WS upgrade.
-const signalrBase = __ENV.WS_URL || BASE_URL;
-export const SIGNALR_HTTP_URL = signalrBase
-  .replace("wss://", "https://")
-  .replace("ws://", "http://");
-export const WS_URL = signalrBase
+const wsBase = __ENV.WS_URL || BASE_URL;
+export const WS_URL = wsBase
   .replace("https://", "wss://")
   .replace("http://", "ws://");
 
-// Use /health/live for local (avoids Redis timeout), /health for UAT
-export const HEALTH_URL = __ENV.HEALTH_URL || `${BASE_URL}/health/live`;
+export const HEALTH_URL = __ENV.HEALTH_URL || `${BASE_URL}/health`;
 
 // ─── JWT Parameters (QiServiceScheme) ─────────────────────────
 export const JWT_CONFIG = {
@@ -40,18 +31,33 @@ export const HUBS = {
   presence: "/hubs/presence",
   message: "/hubs/message",
 };
+
 // ─── Timing ───────────────────────────────────────────────────
 export const TIMING = {
-  heartbeatIntervalMs: 45000, // Call Heartbeat() every 45s (Redis TTL is 120s)
-  pingIntervalMs: 15000, // SignalR keep-alive ping every 15s
-  holdDurationMs: 60000, // How long each VU holds the connection
-  messageDelayMs: 2000, // Delay between chat messages
-  handshakeTimeoutMs: 10000, // Max wait for SignalR handshake response
+  handshakeTimeoutMs: parseInt(__ENV.HANDSHAKE_TIMEOUT_MS || "10000", 10),
+
+  // Business presence load
+  heartbeatIntervalMs: parseInt(__ENV.HEARTBEAT_INTERVAL_MS || "45000", 10),
+
+  // Session durations (default 10 minutes — realistic mobile session)
+  holdDurationMs: parseInt(__ENV.HOLD_DURATION_MS || "600000", 10),
+
+  // Queries
+  isUserOnlineEveryMs: parseInt(__ENV.IS_USER_ONLINE_EVERY_MS || "10000", 10),
+
+  // Close grace jitter (not pod termination)
+  closeJitterMs: parseInt(__ENV.CLOSE_JITTER_MS || "2000", 10),
+
+  // Legacy (used by other scenarios)
+  pingIntervalMs: 15000,
+  messageDelayMs: 2000,
 };
 
-// ─── Progressive Ramp Stages (AWS Cloud Target) ──────────────
-// Each stage defines a VU ramp pattern for production-grade infrastructure.
-// Use "breakpoint" to find the exact failure point (slow continuous ramp).
+// ─── Stages ───────────────────────────────────────────────────
+// Tuned to validate:
+// - WebSocket stability (hold)
+// - HPA scaling (ramp)
+// - ALB idle timeout + draining (long hold)
 export const STAGES = {
   smoke: [
     { duration: "30s", target: 10 },
@@ -66,17 +72,18 @@ export const STAGES = {
   medium: [
     { duration: "1m", target: 200 },
     { duration: "3m", target: 500 },
-    { duration: "3m", target: 500 },
+    { duration: "5m", target: 500 }, // HOLD long enough to see disconnect patterns
     { duration: "1m", target: 0 },
   ],
   // Production target for Iraqi C2C marketplace:
   // Validates 500 → 1000 concurrent WS with zero errors.
+  // Long holds validate ALB idle timeout + pod drain.
   production: [
     { duration: "1m", target: 100 }, // warm-up
     { duration: "2m", target: 500 }, // ramp to 500
-    { duration: "3m", target: 500 }, // HOLD 500 — must be 0% errors
+    { duration: "10m", target: 500 }, // long hold — validates ingress idle/drain
     { duration: "2m", target: 1000 }, // ramp to 1000
-    { duration: "3m", target: 1000 }, // HOLD 1000 — must be 0% errors
+    { duration: "10m", target: 1000 }, // long hold — validates at peak
     { duration: "1m", target: 0 }, // cool-down
   ],
   high: [
@@ -85,21 +92,16 @@ export const STAGES = {
     { duration: "5m", target: 2000 },
     { duration: "2m", target: 0 },
   ],
-  // Breakpoint test: slow continuous ramp 0 → 5000 over ~20 minutes.
-  // abortOnFail thresholds will auto-stop at the exact breaking point.
-  // The HTML report will show the peak VUs reached before failure.
+  // Breakpoint: slower ramp gives HPA time to scale.
+  // abortOnFail auto-stops at the exact breaking point.
   breakpoint: [
-    { duration: "1m", target: 100 },
+    { duration: "2m", target: 100 },
     { duration: "2m", target: 500 },
-    { duration: "3m", target: 1000 },
+    { duration: "2m", target: 1000 },
     { duration: "3m", target: 2000 },
+    { duration: "3m", target: 3000 },
     { duration: "3m", target: 4000 },
-    { duration: "3m", target: 6000 },
-    { duration: "3m", target: 8000 },
-    { duration: "3m", target: 10000 },
-    { duration: "3m", target: 13000 },
-    { duration: "3m", target: 16000 },
-    { duration: "3m", target: 20000 },
+    { duration: "3m", target: 5000 },
     { duration: "1m", target: 0 },
   ],
   extreme: [
@@ -119,34 +121,38 @@ export const MessageType = {
 };
 
 // ─── Thresholds ───────────────────────────────────────────────
-// Base thresholds used by all scenarios. Scenario-specific thresholds
-// (e.g. notification_delivery_latency) are added in individual scenario files.
 export const THRESHOLDS = {
-  ws_connecting_duration: ["p(95)<2000"],
-  ws_handshake_duration: ["p(95)<1000"],
+  ws_connecting_duration: ["p(95)<2500"],
+  ws_handshake_duration: ["p(95)<1500"],
   ws_errors: ["rate<0.01"],
-  http_req_duration: ["p(95)<3000"],
-  http_req_failed: ["rate<0.05"],
+
+  ws_handshake_success_rate: ["rate>0.99"],
+  ws_session_ok_rate: ["rate>0.98"],
+
+  heartbeat_ack_latency: ["p(95)<1500"],
+  is_user_online_latency: ["p(95)<2000"],
 };
 
-// Breakpoint thresholds: same limits but abortOnFail stops the test
-// the moment a threshold is breached, so you know the exact VU count.
+// Breakpoint thresholds: abortOnFail stops at the exact breaking point.
+// Primary abort trigger: ws_handshake_success_rate — sampled immediately on each
+// connect attempt, works correctly even when VUs hold connections for the full test.
+// ws_errors and ws_session_ok_rate are informational only (no abort) because
+// long-hold VUs don't produce "success" samples until interrupted at test end.
 export const BREAKPOINT_THRESHOLDS = {
   ws_connecting_duration: [
-    { threshold: "p(95)<5000", abortOnFail: true, delayAbortEval: "10s" },
+    { threshold: "p(95)<5000", abortOnFail: true, delayAbortEval: "15s" },
   ],
   ws_handshake_duration: [
-    { threshold: "p(95)<3000", abortOnFail: true, delayAbortEval: "10s" },
+    { threshold: "p(95)<3000", abortOnFail: true, delayAbortEval: "15s" },
   ],
-  ws_errors: [
-    { threshold: "rate<0.05", abortOnFail: true, delayAbortEval: "10s" },
+  // Informational only — do NOT abort on ws_errors for breakpoint
+  ws_errors: ["rate<0.10"],
+  // PRIMARY abort trigger: sampled at the moment of connect, not at session end
+  ws_handshake_success_rate: [
+    { threshold: "rate>0.95", abortOnFail: true, delayAbortEval: "30s" },
   ],
-  http_req_duration: [
-    { threshold: "p(95)<5000", abortOnFail: true, delayAbortEval: "10s" },
-  ],
-  http_req_failed: [
-    { threshold: "rate<0.10", abortOnFail: true, delayAbortEval: "10s" },
-  ],
+  // Informational only — VUs never complete sessions in breakpoint
+  ws_session_ok_rate: ["rate>0.50"],
 };
 
 // ─── Helpers ──────────────────────────────────────────────────

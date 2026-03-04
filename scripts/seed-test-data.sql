@@ -2,7 +2,7 @@
 -- Load Test Data Seed Script
 -- ═══════════════════════════════════════════════════════════════
 --
--- Creates 1000 seller/buyer pairs with items for k6 load testing.
+-- Creates 5000 seller/buyer pairs with items for k6 load testing.
 --
 -- UUIDs are DETERMINISTIC: md5('loadtest-seller-{N}')::uuid
 -- k6 generates identical UUIDs client-side using the same md5 seed.
@@ -12,7 +12,7 @@
 --   psql -h <host> -U <user> -d <database> -f seed-test-data.sql
 --
 -- To change pair count:
---   Edit the number in every generate_series(1, 1000) call below.
+--   Edit the number in every generate_series(1, 5000) call below.
 --
 -- To clean up:
 --   psql ... -f cleanup-test-data.sql
@@ -63,7 +63,7 @@ WHERE "KnownAs" LIKE 'LT Seller %' OR "KnownAs" LIKE 'LT Buyer %';
 DELETE FROM "AspNetUsers"
 WHERE "UserName" LIKE 'loadtest-seller-%' OR "UserName" LIKE 'loadtest-buyer-%';
 
--- ─── 1. Seller AppUsers (1000) ────────────────────────────────
+-- ─── 1. Seller AppUsers (5000) ────────────────────────────────
 
 INSERT INTO "AspNetUsers" (
   "Id", "UserName", "NormalizedUserName",
@@ -88,9 +88,9 @@ SELECT
   'Load Test Seller ' || i,
   false,
   2  -- Customer
-FROM generate_series(1, 1000) AS i;
+FROM generate_series(1, 5000) AS i;
 
--- ─── 2. Buyer AppUsers (1000) ─────────────────────────────────
+-- ─── 2. Buyer AppUsers (5000) ─────────────────────────────────
 
 INSERT INTO "AspNetUsers" (
   "Id", "UserName", "NormalizedUserName",
@@ -115,9 +115,9 @@ SELECT
   'Load Test Buyer ' || i,
   false,
   2  -- Customer
-FROM generate_series(1, 1000) AS i;
+FROM generate_series(1, 5000) AS i;
 
--- ─── 3. Seller Profiles (1000) ────────────────────────────────
+-- ─── 3. Seller Profiles (5000) ────────────────────────────────
 
 INSERT INTO "Profile" (
   "Id", "AppUserId",
@@ -132,9 +132,9 @@ SELECT
   'LT Seller ' || i,
   '', '',
   NOW(), false, 1  -- Active
-FROM generate_series(1, 1000) AS i;
+FROM generate_series(1, 5000) AS i;
 
--- ─── 4. Buyer Profiles (1000) ─────────────────────────────────
+-- ─── 4. Buyer Profiles (5000) ─────────────────────────────────
 
 INSERT INTO "Profile" (
   "Id", "AppUserId",
@@ -149,9 +149,9 @@ SELECT
   'LT Buyer ' || i,
   '', '',
   NOW(), false, 1  -- Active
-FROM generate_series(1, 1000) AS i;
+FROM generate_series(1, 5000) AS i;
 
--- ─── 5. Items (1000 — one per seller) ────────────────────────
+-- ─── 5. Items (5000 — one per seller) ────────────────────────
 
 INSERT INTO "Items" (
   "Id", "Title", "Description",
@@ -178,7 +178,7 @@ SELECT
   (ARRAY[1, 2, 3])[1 + ((i - 1) % 3)],                    -- New / Used / Refurbished
   md5('loadtest-seller-profile-' || i)::uuid,               -- SellerId = Seller's Profile.Id
   NOW(), false, 1                                           -- Active
-FROM generate_series(1, 1000) AS i;
+FROM generate_series(1, 5000) AS i;
 
 -- ─── Verify ───────────────────────────────────────────────────
 
