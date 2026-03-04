@@ -11,14 +11,14 @@
  * │              TOTAL CONCURRENT USERS (e.g. 50,000)               │
  * ├─────────────────────────────────────────────────┬─────────┬─────┤
  * │ ████████████████████████████████████████████████ │█████████│███  │
- * │ Chat + Offers  75%           (37,500 VUs)       │Browse 20│Idle │
+ * │ Chat 75%                     (37,500 VUs)       │Browse 20│Idle │
  * │ ┌─────────────────┬─────────────────┐           │(10,000) │5%   │
  * │ │ Sellers  37.5%  │ Buyers  37.5%   │           │         │     │
  * │ │ (18,750 VUs)    │ (18,750 VUs)    │           │         │     │
  * │ │ MessageHub      │ MessageHub      │           │REST API │Pres │
  * │ │ listen for msgs │ send messages   │           │browse   │Hub  │
  * │ │ mark as read ★  │ verify read ★   │           │search   │only │
- * │ │ verify delivery │ create offers   │           │view     │     │
+ * │ │ verify delivery │ verify delivery │           │view     │     │
  * │ └─────────────────┴─────────────────┘           │         │     │
  * └─────────────────────────────────────────────────┴─────────┴─────┘
  *
@@ -28,8 +28,6 @@
  *   2. Seller ← NewMessage  (verifies CID, measures latency)
  *   3. Seller → MessageRead (marks message IDs as read in DB)
  *   4. Buyer  ← MessageRead event (verifies read receipt arrived)
- *   5. Buyer  → CreateOffer (REST)
- *   6. Seller → AcceptOffer (REST)
  *
  * ── Stages ────────────────────────────────────────────────────────────
  *
@@ -118,13 +116,6 @@ const messagesMarkedRead = new Counter("messages_marked_read");
 const markReadLatency = new Trend("mark_read_latency", true);
 const readReceiptsReceived = new Counter("read_receipts_received");
 const readReceiptMatch = new Rate("read_receipt_match");
-
-// ── Offer Lifecycle ──────────────────────────────────────────
-const offerCreationLatency = new Trend("offer_creation_latency", true);
-const offerAcceptLatency = new Trend("offer_accept_latency", true);
-const offersCreated = new Counter("offers_created");
-const offersAccepted = new Counter("offers_accepted");
-const offersFailed = new Counter("offers_failed");
 
 // ── Browsing Performance ─────────────────────────────────────
 const browseItemsLatency = new Trend("browse_items_latency", true);
@@ -333,10 +324,6 @@ export const options = {
       ? [{ threshold: "p(95)<5000", abortOnFail: true, delayAbortEval: "10s" }]
       : [isStress ? "p(95)<5000" : "p(95)<3000"],
     browse_errors: [isStress ? "rate<0.10" : "rate<0.05"],
-    // Offers
-    offer_creation_latency: isBreakpoint
-      ? [{ threshold: "p(95)<5000", abortOnFail: true, delayAbortEval: "10s" }]
-      : [isStress ? "p(95)<10000" : "p(95)<3000"],
   },
   tags: { scenario: "realistic-load", stage: stage },
 };
@@ -413,7 +400,7 @@ export function setup() {
     `║  Sellers: ${fmtNum(sellerVUs)}  |  Buyers: ${fmtNum(buyerVUs)}  |  Browsers: ${fmtNum(browserVUs)}  |  Idle: ${fmtNum(idleVUs)}`,
   );
   console.log(`║`);
-  console.log(`║  ★ Full lifecycle: Send → Deliver → MarkRead → ReadReceipt`);
+  console.log(`║  ★ Lifecycle: Send → Deliver → MarkRead → ReadReceipt`);
   console.log(
     `╚══════════════════════════════════════════════════════════════╝`,
   );
@@ -501,10 +488,9 @@ export function sellerFlow() {
             socket.send(pingMessage());
           }, TIMING.pingIntervalMs);
 
-          // Max session duration — must outlive buyer's full lifecycle
-          // Buyer needs ~25s (msgs + typing + offer + accept + wait)
+          // Max session duration — must outlive buyer's message + read lifecycle
           const holdMs =
-            8000 + (MESSAGES_PER_SESSION + 4) * MSG_DELAY_MS + 40000;
+            8000 + (MESSAGES_PER_SESSION + 4) * MSG_DELAY_MS + 20000;
           socket.setTimeout(function () {
             if (!markReadDone) doMarkAsRead(socket);
             else socket.close();
@@ -587,7 +573,6 @@ export function sellerFlow() {
 
         if (isEvent(msg, "UserTyping")) continue;
         if (isEvent(msg, "OfferStatusChanged")) continue;
-        if (isEvent(msg, "InvoiceCreated")) continue;
         if (isEvent(msg, "ChatStatusChanged")) continue;
         if (isEvent(msg, "MessageRead")) continue; // echo of our own mark-read
 
@@ -692,7 +677,7 @@ export function sellerFlow() {
 //
 //  37.5% — Connect to MessageHub as buyer, send messages with
 //  CID + timestamp, verify "MessageRead" event comes back from
-//  seller (proves read-status persisted to DB), then create offer.
+//  seller (proves read-status persisted to DB).
 //
 // ═══════════════════════════════════════════════════════════════
 
@@ -703,7 +688,6 @@ export function buyerFlow() {
 
   const pair = getTestPair(pairIdx);
   const buyerToken = generateToken(pair.buyer);
-  const sellerToken = generateToken(pair.seller);
 
   const queryParams = {
     recipientUsername: pair.seller.username,
@@ -719,9 +703,6 @@ export function buyerFlow() {
   let sessionStart = 0;
   let msgCount = 0;
   let invocationCounter = 0;
-  let offerDone = false;
-  let offerLifecycleComplete = false; // ★ Track when entire offer lifecycle is done
-  let offerTimedOut = false; // ★ Track if offer HTTP calls timed out (status=0)
   let readReceiptSeen = false; // ★ Track if we got MessageRead back
   let allMessagesSentAt = 0; // ★ Track when all messages were sent
   let buffer = ""; // ★ Buffered parser state
@@ -803,19 +784,14 @@ export function buyerFlow() {
             readReceiptSeen = true;
             readReceiptsReceived.add(1);
             readReceiptMatch.add(1);
-            // ★ Only auto-close if offer lifecycle is already done.
-            //   Otherwise the offer handler will close the socket.
-            if (offerLifecycleComplete) {
-              socket.setTimeout(function () {
-                socket.close();
-              }, 1000);
-            }
+            socket.setTimeout(function () {
+              socket.close();
+            }, 1000);
           }
           continue;
         }
 
         if (isEvent(msg, "OfferStatusChanged")) continue;
-        if (isEvent(msg, "InvoiceCreated")) continue;
         if (isEvent(msg, "ChatStatusChanged")) continue;
         if (isEvent(msg, "UserTyping")) continue;
         if (isCompletion(msg)) continue; // any completion
@@ -839,16 +815,11 @@ export function buyerFlow() {
       //   A miss is only meaningful when:
       //   1. Handshake completed (we actually connected)
       //   2. All messages were sent (allMessagesSentAt > 0)
-      //   3. Offer lifecycle finished normally (not timed out by HTTP timeout)
-      //   4. Waited at least 8s after sending for the seller→DB→buyer round-trip
+      //   3. Waited at least 8s after sending for the seller→DB→buyer round-trip
       //   If ANY of these conditions is false, the miss is a test infrastructure
-      //   problem (port exhaustion, HTTP timeout, broken seller), not a server bug.
+      //   problem (port exhaustion, broken seller), not a server bug.
       if (!readReceiptSeen) {
-        const sessionHealthy =
-          handshakeCompleted &&
-          allMessagesSentAt > 0 &&
-          offerLifecycleComplete &&
-          !offerTimedOut;
+        const sessionHealthy = handshakeCompleted && allMessagesSentAt > 0;
         if (sessionHealthy) {
           const waitedForReceipt = Date.now() - allMessagesSentAt;
           if (waitedForReceipt >= 8000) {
@@ -877,11 +848,11 @@ export function buyerFlow() {
     function sendNextMessage(sock) {
       if (msgCount >= MESSAGES_PER_SESSION) {
         if (!allMessagesSentAt) allMessagesSentAt = Date.now();
-        if (!offerDone) {
-          sock.setTimeout(function () {
-            doOfferLifecycle(sock);
-          }, MSG_DELAY_MS);
-        }
+        // ★ Wait for read receipt from seller, then close
+        const receiptWaitMs = readReceiptSeen ? 1000 : 8000;
+        sock.setTimeout(function () {
+          sock.close();
+        }, receiptWaitMs);
         return;
       }
 
@@ -912,47 +883,6 @@ export function buyerFlow() {
           sendNextMessage(sock);
         }, MSG_DELAY_MS);
       }, 300);
-    }
-
-    // ── Offer lifecycle ───────────────────────────────────
-    function doOfferLifecycle(sock) {
-      offerDone = true;
-
-      const offerId = createOffer(buyerToken, pair.itemId);
-
-      // ★ Detect offer HTTP timeout — marks session as unhealthy for receipt tracking
-      if (offerId === null) {
-        // createOffer returns null on timeout (status=0) or non-locked failure
-        // Check if it was likely a timeout by seeing if the call took ~10s
-        offerTimedOut = true;
-      }
-
-      // ★ Wait 8s (was 5s) after offer to give MessageRead time to arrive
-      //   via seller→DB→Redis backplane→buyer. 8s is generous but accurate.
-      const receiptWaitMs = readReceiptSeen ? 1000 : 8000;
-
-      if (offerId === "item-locked") {
-        offerLifecycleComplete = true;
-        offerTimedOut = false; // item-locked is not a timeout
-        sock.setTimeout(function () {
-          sock.close();
-        }, receiptWaitMs);
-      } else if (offerId) {
-        offerTimedOut = false; // got a real offerId — not a timeout
-        sock.setTimeout(function () {
-          acceptOffer(offerId, sellerToken);
-          offerLifecycleComplete = true;
-          sock.setTimeout(function () {
-            sock.close();
-          }, receiptWaitMs);
-        }, MSG_DELAY_MS);
-      } else {
-        // offerId === null → either timeout or server error
-        offerLifecycleComplete = true;
-        sock.setTimeout(function () {
-          sock.close();
-        }, receiptWaitMs);
-      }
     }
   });
 
@@ -1268,101 +1198,6 @@ export function idleFlow() {
   }
 
   sleep(Math.random() * 3 + 1);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// REST HELPERS — Offer lifecycle
-// ═══════════════════════════════════════════════════════════════
-
-function createOffer(token, itemId) {
-  const amount = Math.floor(Math.random() * 9750) + 250;
-  const payload = JSON.stringify({
-    offerType: 1,
-    offeredAmount: amount,
-    message: `Load test offer $${amount} from VU ${__VU}`,
-    expirationHours: 24,
-  });
-
-  const start = Date.now();
-  const res = http.post(`${BASE_URL}/api/pos/items/${itemId}/offers`, payload, {
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    tags: { name: "create-offer" },
-    timeout: "10s",
-    responseCallback: http.expectedStatuses(200, 201, 400),
-  });
-  // ★ Skip recording latency for timeouts (status=0) — they poison p95
-  if (res.status !== 0) {
-    offerCreationLatency.add(Date.now() - start);
-  }
-
-  const created = check(res, {
-    "offer created (200/201)": (r) => r.status === 200 || r.status === 201,
-  });
-
-  if (!created) {
-    if (res.status === 400) {
-      const body = res.body || "";
-      if (
-        body.indexOf("\u063A\u064A\u0631 \u0645\u062A\u0627\u062D") > -1 ||
-        body.indexOf("not available") > -1 ||
-        body.indexOf("InTransaction") > -1
-      ) {
-        offersFailed.add(1);
-        return "item-locked";
-      }
-    }
-    offersFailed.add(1);
-    return null;
-  }
-
-  offersCreated.add(1);
-  try {
-    const body = res.json();
-    return body.result?.offerId || body.result?.id || null;
-  } catch (e) {
-    return null;
-  }
-}
-
-function acceptOffer(offerId, token) {
-  if (!offerId) return false;
-
-  const payload = JSON.stringify({
-    responseMessage: `Accepted by load test VU ${__VU}`,
-  });
-
-  const start = Date.now();
-  const res = http.post(
-    `${BASE_URL}/api/pos/offers/${offerId}/accept`,
-    payload,
-    {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      tags: { name: "accept-offer" },
-      timeout: "10s",
-      responseCallback: http.expectedStatuses(200, 400, 409),
-    },
-  );
-  // ★ Skip recording latency for timeouts
-  if (res.status !== 0) {
-    offerAcceptLatency.add(Date.now() - start);
-  }
-
-  const accepted = check(res, {
-    "offer accepted (200)": (r) => r.status === 200,
-  });
-
-  if (!accepted) {
-    offersFailed.add(1);
-    return false;
-  }
-  offersAccepted.add(1);
-  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════
