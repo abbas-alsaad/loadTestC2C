@@ -29,7 +29,7 @@ export const HEALTH_URL = __ENV.HEALTH_URL || `${BASE_URL}/health/live`;
 export const JWT_CONFIG = {
   secret:
     __ENV.JWT_SECRET ||
-    "jioHKjG2ByyIQ6BeuZRHwkCiL1Bd2NanddqjOGIzxqv1iNIc9kKj34vwHorwKhrhvUWtKUgRE6r",
+    "9vc62Jwz36OF8Ax2eSjRJ5wqcFQko59Hn8UgpCnjMuSYQo7kCJMO4ZK0AixDAGO1SsmaSW",
   issuer: "qi-services",
   audience: "F0E62818-F5CE-4844-B01D-5F1A9F105967",
   expiresInSeconds: 3600,

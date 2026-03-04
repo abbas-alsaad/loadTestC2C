@@ -189,6 +189,12 @@ const TOTAL_STAGES = {
     { duration: "2m", target: 50000 },
     { duration: "1m", target: 0 },
   ],
+  extremeSmall: [
+    { duration: "1m", target: 5000 },
+    { duration: "1m", target: 10000 },
+    { duration: "2m", target: 15000 },
+    { duration: "1m", target: 0 },
+  ],
 };
 
 function scaleStages(stages, ratio) {
@@ -400,6 +406,9 @@ export function sellerFlow() {
   let deliveredCount = 0;
   const seenCIDs = new Set();
   const receivedMessageIds = []; // ★ Collect IDs for mark-as-read
+  let markReadDone = false;
+  let markReadInvId = "";
+  let markReadSentAt = 0;
 
   const res = ws.connect(wsUrl, null, function (socket) {
     wsConnectingDuration.add(Date.now() - connectStart);
@@ -431,12 +440,12 @@ export function sellerFlow() {
             socket.send(pingMessage());
           }, TIMING.pingIntervalMs);
 
-          // Hold long enough for buyer to send all messages + offer + mark-read
+          // Max session duration — fallback if messages arrive late
           const holdMs =
             5000 + (MESSAGES_PER_SESSION + 4) * MSG_DELAY_MS + 15000;
           socket.setTimeout(function () {
-            // ★ Before closing: mark all received messages as read
-            doMarkAsRead(socket);
+            if (!markReadDone) doMarkAsRead(socket);
+            else socket.close();
           }, holdMs);
           continue;
         }
@@ -492,6 +501,13 @@ export function sellerFlow() {
               if (tsMatch) {
                 messageDeliveryLatency.add(Date.now() - parseInt(tsMatch[1]));
               }
+
+              // ★ Mark as read once we've received all expected messages
+              if (deliveredCount === MESSAGES_PER_SESSION && !markReadDone) {
+                socket.setTimeout(function () {
+                  doMarkAsRead(socket);
+                }, 2000); // 2s simulate reading delay
+              }
             } else if (
               parseInt(cidPair) === pair.pairIndex &&
               seenCIDs.has(cidKey)
@@ -511,7 +527,14 @@ export function sellerFlow() {
         if (isEvent(msg, "InvoiceCreated")) continue;
         if (isEvent(msg, "ChatStatusChanged")) continue;
         if (isEvent(msg, "MessageRead")) continue; // echo of our own mark-read
-        if (msg.type === MSG_TYPE.COMPLETION) continue;
+
+        // ★ Track mark-read round-trip latency via completion
+        if (msg.type === MSG_TYPE.COMPLETION) {
+          if (markReadInvId && msg.invocationId === markReadInvId) {
+            markReadLatency.add(Date.now() - markReadSentAt);
+          }
+          continue;
+        }
       }
     });
 
@@ -521,19 +544,29 @@ export function sellerFlow() {
     //   2. Broadcasts "MessageRead" event to buyer in the group
     // ══════════════════════════════════════════════════════════
     function doMarkAsRead(sock) {
+      if (markReadDone) {
+        sock.close();
+        return;
+      }
+      markReadDone = true;
+
       if (receivedMessageIds.length > 0) {
-        const markStart = Date.now();
+        markReadInvId = `mr-${__VU}-${Date.now()}`;
+        markReadSentAt = Date.now();
         sock.send(
-          invocationMessage("MessageRead", [receivedMessageIds, pair.itemId]),
+          invocationMessage(
+            "MessageRead",
+            [receivedMessageIds, pair.itemId],
+            markReadInvId,
+          ),
         );
         messagesMarkedRead.add(receivedMessageIds.length);
-        markReadLatency.add(Date.now() - markStart);
       }
 
-      // Close after a short delay to let the server process
+      // Wait for server to process + completion to arrive, then close
       sock.setTimeout(function () {
         sock.close();
-      }, 2000);
+      }, 3000);
     }
 
     socket.on("error", function (e) {
@@ -665,6 +698,10 @@ export function buyerFlow() {
             readReceiptSeen = true;
             readReceiptsReceived.add(1);
             readReceiptMatch.add(1);
+            // ★ Close soon after confirming read receipt
+            socket.setTimeout(function () {
+              socket.close();
+            }, 2000);
           }
           continue;
         }
