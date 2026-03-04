@@ -494,9 +494,10 @@ export function sellerFlow() {
             socket.send(pingMessage());
           }, TIMING.pingIntervalMs);
 
-          // Max session duration — must outlive buyer's message + read lifecycle
+          // ★ Max session duration — reduced from 42s to 25s for faster iteration cycling
+          //   This helps seller iterations sync better with buyer iterations
           const holdMs =
-            8000 + (MESSAGES_PER_SESSION + 4) * MSG_DELAY_MS + 20000;
+            3000 + (MESSAGES_PER_SESSION + 2) * MSG_DELAY_MS + 12000;
           socket.setTimeout(function () {
             if (!markReadDone) doMarkAsRead(socket);
             else socket.close();
