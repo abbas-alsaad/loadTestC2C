@@ -69,6 +69,16 @@ export const STAGES = {
     { duration: "3m", target: 500 },
     { duration: "1m", target: 0 },
   ],
+  // Production target for Iraqi C2C marketplace:
+  // Validates 500 → 1000 concurrent WS with zero errors.
+  production: [
+    { duration: "1m", target: 100 }, // warm-up
+    { duration: "2m", target: 500 }, // ramp to 500
+    { duration: "3m", target: 500 }, // HOLD 500 — must be 0% errors
+    { duration: "2m", target: 1000 }, // ramp to 1000
+    { duration: "3m", target: 1000 }, // HOLD 1000 — must be 0% errors
+    { duration: "1m", target: 0 }, // cool-down
+  ],
   high: [
     { duration: "1m", target: 500 },
     { duration: "2m", target: 2000 },

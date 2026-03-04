@@ -1,0 +1,591 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Load Test Report — Presence Hub — Connection Lifecycle</title>
+    <style>
+      :root {
+        --pass: #22c55e;
+        --fail: #ef4444;
+        --warn: #f59e0b;
+        --info: #3b82f6;
+        --bg: #0f172a;
+        --surface: #1e293b;
+        --surface2: #334155;
+        --text: #f1f5f9;
+        --text2: #94a3b8;
+        --border: #475569;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: "SF Mono", "Cascadia Code", "Fira Code", monospace;
+        background: var(--bg);
+        color: var(--text);
+        padding: 24px;
+        line-height: 1.6;
+      }
+      .container {
+        max-width: 1100px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 1.6rem;
+        font-weight: 700;
+        margin-bottom: 4px;
+      }
+      h2 {
+        font-size: 1.15rem;
+        font-weight: 600;
+        margin: 32px 0 12px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+      }
+      h3 {
+        font-size: 0.95rem;
+        font-weight: 600;
+        margin: 16px 0 8px;
+        color: var(--text2);
+      }
+
+      /* Header */
+      .header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+      .header-left h1 {
+        color: var(--text);
+      }
+      .header-left .subtitle {
+        color: var(--text2);
+        font-size: 0.85rem;
+      }
+
+      /* Badge */
+      .badge {
+        display: inline-block;
+        padding: 6px 20px;
+        border-radius: 6px;
+        font-weight: 700;
+        font-size: 1.1rem;
+        letter-spacing: 1px;
+      }
+      .badge-pass {
+        background: var(--pass);
+        color: #000;
+      }
+      .badge-fail {
+        background: var(--fail);
+        color: #fff;
+      }
+
+      /* Cards */
+      .card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin-bottom: 16px;
+      }
+      .card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 12px;
+      }
+      .stat-card {
+        background: var(--surface2);
+        border-radius: 6px;
+        padding: 14px 16px;
+      }
+      .stat-label {
+        font-size: 0.75rem;
+        color: var(--text2);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+      }
+      .stat-value {
+        font-size: 1.4rem;
+        font-weight: 700;
+      }
+      .stat-sub {
+        font-size: 0.7rem;
+        color: var(--text2);
+        margin-top: 2px;
+      }
+
+      /* Tables */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.82rem;
+      }
+      th {
+        text-align: left;
+        padding: 10px 12px;
+        background: var(--surface2);
+        color: var(--text2);
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.7rem;
+        letter-spacing: 0.5px;
+      }
+      td {
+        padding: 8px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+      tr:last-child td {
+        border-bottom: none;
+      }
+      .text-right {
+        text-align: right;
+      }
+      .text-center {
+        text-align: center;
+      }
+
+      /* Threshold indicators */
+      .th-pass {
+        color: var(--pass);
+        font-weight: 700;
+      }
+      .th-fail {
+        color: var(--fail);
+        font-weight: 700;
+      }
+
+      /* Severity */
+      .sev-critical {
+        border-left: 4px solid var(--fail);
+        padding-left: 12px;
+        margin-bottom: 8px;
+      }
+      .sev-warning {
+        border-left: 4px solid var(--warn);
+        padding-left: 12px;
+        margin-bottom: 8px;
+      }
+      .sev-info {
+        border-left: 4px solid var(--info);
+        padding-left: 12px;
+        margin-bottom: 8px;
+      }
+      .sev-label {
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+      .sev-label-critical {
+        color: var(--fail);
+      }
+      .sev-label-warning {
+        color: var(--warn);
+      }
+      .sev-label-info {
+        color: var(--info);
+      }
+
+      /* Config list */
+      .config-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 8px 24px;
+      }
+      .config-item {
+        display: flex;
+        justify-content: space-between;
+        padding: 4px 0;
+        border-bottom: 1px dotted var(--border);
+      }
+      .config-key {
+        color: var(--text2);
+        font-size: 0.8rem;
+      }
+      .config-val {
+        font-weight: 600;
+        font-size: 0.8rem;
+      }
+
+      /* Footer */
+      .footer {
+        margin-top: 32px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+        color: var(--text2);
+        font-size: 0.7rem;
+        text-align: center;
+      }
+
+      @media print {
+        body {
+          background: #fff;
+          color: #000;
+        }
+        .card {
+          border-color: #ccc;
+        }
+        .stat-card {
+          background: #f0f0f0;
+        }
+        .badge-pass {
+          background: #22c55e;
+        }
+        .badge-fail {
+          background: #ef4444;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <!-- ═══ HEADER ══════════════════════════════════════════════ -->
+      <div class="header">
+        <div class="header-left">
+          <h1>C2C SignalR Load Test Report</h1>
+          <div class="subtitle">Presence Hub — Connection Lifecycle</div>
+        </div>
+        <div>
+          <span class="badge badge-fail">✗ FAILED</span>
+        </div>
+      </div>
+
+      <!-- ═══ TEST CONFIGURATION ═════════════════════════════════ -->
+      <div class="card">
+        <h3>Test Configuration</h3>
+        <div class="config-grid">
+          <div class="config-item">
+            <span class="config-key">Target</span
+            ><span class="config-val">https://c2c-api-uat.gini.iq</span>
+          </div>
+          <div class="config-item">
+            <span class="config-key">Scenario</span
+            ><span class="config-val">presence-hub</span>
+          </div>
+          <div class="config-item">
+            <span class="config-key">Stage</span
+            ><span class="config-val">medium</span>
+          </div>
+          <div class="config-item">
+            <span class="config-key">Max VUs</span
+            ><span class="config-val">500</span>
+          </div>
+          <div class="config-item">
+            <span class="config-key">Duration</span
+            ><span class="config-val">8 min</span>
+          </div>
+          <div class="config-item">
+            <span class="config-key">Timestamp</span
+            ><span class="config-val">Mar 4, 2026, 02:03:22</span>
+          </div>
+          <div class="config-item">
+            <span class="config-key">Total Iterations</span
+            ><span class="config-val">6,818</span>
+          </div>
+          <div class="config-item">
+            <span class="config-key">Peak VUs</span
+            ><span class="config-val">500</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ EXECUTIVE SUMMARY ══════════════════════════════════ -->
+      <h2>Executive Summary</h2>
+      <div class="card-grid">
+        <div class="stat-card">
+          <div class="stat-label">Thresholds</div>
+          <div class="stat-value" style="color: var(--fail)">4 / 5</div>
+          <div class="stat-sub">1 failed</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Error Rate</div>
+          <div class="stat-value" style="color: var(--fail)">59.35%</div>
+          <div class="stat-sub">WebSocket errors</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Connect p95</div>
+          <div class="stat-value" style="color: var(--pass)">253.0 ms</div>
+          <div class="stat-sub">WebSocket connect time</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Handshake p95</div>
+          <div class="stat-value" style="color: var(--pass)">84.0 ms</div>
+          <div class="stat-sub">SignalR handshake</div>
+        </div>
+      </div>
+
+      <!-- ═══ THROUGHPUT ══════════════════════════════════════════ -->
+
+      <h2>Throughput</h2>
+      <div class="card-grid">
+        <div class="stat-card">
+          <div class="stat-label">Iterations / sec</div>
+          <div class="stat-value">13.6</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">HTTP Requests / sec</div>
+          <div class="stat-value">0.0</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Presence Checks / sec</div>
+          <div class="stat-value">29.6</div>
+        </div>
+      </div>
+
+      <!-- ═══ THRESHOLD RESULTS ══════════════════════════════════ -->
+      <h2>Threshold Results</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Threshold</th>
+              <th class="text-center">Result</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>http_req_duration</td>
+              <td><code>p(95)&lt;3000</code></td>
+              <td class="text-center th-pass">✓ PASS</td>
+            </tr>
+            <tr>
+              <td>ws_connecting_duration</td>
+              <td><code>p(95)&lt;2000</code></td>
+              <td class="text-center th-pass">✓ PASS</td>
+            </tr>
+            <tr>
+              <td>http_req_failed</td>
+              <td><code>rate&lt;0.05</code></td>
+              <td class="text-center th-pass">✓ PASS</td>
+            </tr>
+            <tr>
+              <td>ws_handshake_duration</td>
+              <td><code>p(95)&lt;1000</code></td>
+              <td class="text-center th-pass">✓ PASS</td>
+            </tr>
+            <tr>
+              <td>ws_errors</td>
+              <td><code>rate&lt;0.01</code></td>
+              <td class="text-center th-fail">✗ FAIL</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ═══ DETAILED METRICS ═══════════════════════════════════ -->
+      <h2>Detailed Metrics</h2>
+      <div class="card">
+        <h3>Latency / Duration Metrics</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th class="text-right">Avg</th>
+              <th class="text-right">Min</th>
+              <th class="text-right">p50</th>
+              <th class="text-right">p90</th>
+              <th class="text-right">p95</th>
+              <th class="text-right">p99</th>
+              <th class="text-right">Max</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td title="TCP + TLS connection establishment">
+                WebSocket Connect Time
+              </td>
+              <td class="text-right">249.6 ms</td>
+              <td class="text-right">243.0 ms</td>
+              <td class="text-right">249.0 ms</td>
+              <td class="text-right">252.0 ms</td>
+              <td class="text-right">253.0 ms</td>
+              <td class="text-right">—</td>
+              <td class="text-right">320.0 ms</td>
+            </tr>
+            <tr>
+              <td title="SignalR JSON protocol handshake">
+                SignalR Handshake Time
+              </td>
+              <td class="text-right">82.9 ms</td>
+              <td class="text-right">81.0 ms</td>
+              <td class="text-right">83.0 ms</td>
+              <td class="text-right">84.0 ms</td>
+              <td class="text-right">84.0 ms</td>
+              <td class="text-right">—</td>
+              <td class="text-right">96.0 ms</td>
+            </tr>
+            <tr>
+              <td title="Total WebSocket session lifetime">Session Duration</td>
+              <td class="text-right">33.65 s</td>
+              <td class="text-right">242.4 ms</td>
+              <td class="text-right">1.0 min</td>
+              <td class="text-right">1.0 min</td>
+              <td class="text-right">1.0 min</td>
+              <td class="text-right">—</td>
+              <td class="text-right">1.0 min</td>
+            </tr>
+            <tr>
+              <td title="Round-trip time for IsUserOnline hub call">
+                IsUserOnline Latency
+              </td>
+              <td class="text-right">85.5 ms</td>
+              <td class="text-right">82.0 ms</td>
+              <td class="text-right">85.0 ms</td>
+              <td class="text-right">87.0 ms</td>
+              <td class="text-right">87.0 ms</td>
+              <td class="text-right">—</td>
+              <td class="text-right">444.0 ms</td>
+            </tr>
+            <tr>
+              <td title="Negotiate endpoint response time">
+                HTTP Request Duration
+              </td>
+              <td class="text-right">352.5 ms</td>
+              <td class="text-right">352.5 ms</td>
+              <td class="text-right">352.5 ms</td>
+              <td class="text-right">352.5 ms</td>
+              <td class="text-right">352.5 ms</td>
+              <td class="text-right">—</td>
+              <td class="text-right">352.5 ms</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3>Rates &amp; Counters</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Metric</th>
+              <th>Description</th>
+              <th class="text-right">Value</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>WebSocket Error Rate</td>
+              <td style="color: var(--text2)">
+                Percentage of failed connections
+              </td>
+              <td
+                class="text-right"
+                style="color: var(--fail); font-weight: 700"
+              >
+                59.35%
+              </td>
+            </tr>
+            <tr>
+              <td>HTTP Failure Rate</td>
+              <td style="color: var(--text2)">
+                Percentage of failed HTTP requests
+              </td>
+              <td
+                class="text-right"
+                style="color: var(--pass); font-weight: 700"
+              >
+                0.00%
+              </td>
+            </tr>
+            <tr>
+              <td>Connections Opened</td>
+              <td style="color: var(--text2)">
+                Total successful WebSocket connections
+              </td>
+              <td class="text-right" style="font-weight: 700">2,875</td>
+            </tr>
+            <tr>
+              <td>Connections Closed</td>
+              <td style="color: var(--text2)">Total graceful disconnections</td>
+              <td class="text-right" style="font-weight: 700">2,643</td>
+            </tr>
+            <tr>
+              <td>Heartbeats Sent</td>
+              <td style="color: var(--text2)">
+                Total Heartbeat() invocations (Redis TTL refresh)
+              </td>
+              <td class="text-right" style="font-weight: 700">2,757</td>
+            </tr>
+            <tr>
+              <td>IsUserOnline Calls</td>
+              <td style="color: var(--text2)">
+                Total IsUserOnline() invocations
+              </td>
+              <td class="text-right" style="font-weight: 700">14,818</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <!-- ═══ RECOMMENDATIONS ════════════════════════════════════ -->
+      <h2>Recommendations</h2>
+      <div class="card">
+        <div class="sev-critical">
+          <div class="sev-label sev-label-critical">CRITICAL</div>
+          <div>
+            1 threshold(s) FAILED: ws_errors. Investigate before increasing
+            load.
+          </div>
+        </div>
+        <div class="sev-critical">
+          <div class="sev-label sev-label-critical">CRITICAL</div>
+          <div>
+            WebSocket error rate is 59.35% (&gt;5.00%). Check server logs for
+            connection rejections, auth failures, or resource exhaustion.
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ CHECKS ═════════════════════════════════════════════ -->
+      <h2>Checks</h2>
+      <div class="card">
+        <table>
+          <thead>
+            <tr>
+              <th>Check</th>
+              <th class="text-right">Passes</th>
+              <th class="text-right">Failures</th>
+              <th class="text-right">Rate</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>WS status 101</td>
+              <td class="text-right">2,643</td>
+              <td class="text-right" style="color: var(--fail)">4,198</td>
+              <td
+                class="text-right"
+                style="color: var(--fail); font-weight: 700"
+              >
+                38.63%
+              </td>
+            </tr>
+            <tr>
+              <td>health check status 200</td>
+              <td class="text-right">1</td>
+              <td class="text-right" style="color: var(--text2)">0</td>
+              <td
+                class="text-right"
+                style="color: var(--pass); font-weight: 700"
+              >
+                100.00%
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="footer">
+        Generated by C2C Load Test Suite · 2026-03-04T02:03:22.215Z
+      </div>
+    </div>
+  </body>
+</html>
