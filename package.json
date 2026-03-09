@@ -1,0 +1,28 @@
+{
+  "name": "c2c-signalr-load-tests",
+  "version": "1.0.0",
+  "description": "Enterprise SignalR load testing suite for C2C marketplace",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "smoke": "node scenarios/01-smoke.js",
+    "ramp": "node scenarios/02-presence-ramp.js",
+    "heartbeat": "node scenarios/03-presence-heartbeat.js",
+    "chat": "node scenarios/04-chat-throughput.js",
+    "notification": "node scenarios/05-notification-fanout.js",
+    "mixed": "node scenarios/06-mixed-realistic.js",
+    "breakpoint": "node scenarios/07-breakpoint.js",
+    "all": "node run-all.js"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^8.0.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "hdr-histogram-js": "^3.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "ws": "^8.17.0"
+  }
+}
