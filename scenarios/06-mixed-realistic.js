@@ -6,6 +6,7 @@
 //   - 80% PresenceHub only (users browsing the app)
 //   - 20% also connected to MessageHub (users actively chatting)
 // Activity: 70% idle+heartbeat, 20% IsUserOnline probes, 10% chat messages
+// HTTP API calls: 15% browse items, 10% fetch categories (per minute)
 // Random connect/disconnect simulating real user sessions.
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -26,6 +27,11 @@ import {
   disconnectAllPairs,
 } from "../helpers/chat-user.js";
 import { loadSeedData } from "../helpers/seed-loader.js";
+import {
+  getAllItems,
+  getCategories,
+  getParentCategories,
+} from "../helpers/api-client.js";
 
 await runScenario("06-Mixed-Realistic", async (stats, config) => {
   const profile = config.profiles.mixed;
@@ -123,6 +129,54 @@ await runScenario("06-Mixed-Realistic", async (stats, config) => {
     }
     await Promise.allSettled(probePromises);
 
+    // ── 15% browse items (paginated, random pages) ────────────────────────
+    const browseCount = Math.ceil(connectedPresence.length * 0.15);
+    const browsePromises = [];
+    for (let i = 0; i < browseCount && i < presenceTokens.length; i++) {
+      const tokenIdx = Math.floor(Math.random() * presenceTokens.length);
+      const token = presenceTokens[tokenIdx].token;
+      const page = Math.floor(Math.random() * 5) + 1;
+      browsePromises.push(
+        getAllItems(token, { page, pageSize: 20 })
+          .then((res) => {
+            stats.recordApiCall(res.latencyMs);
+            if (res.status >= 400)
+              stats.recordApiError(
+                "getAllItems",
+                new Error(`HTTP ${res.status}`),
+              );
+          })
+          .catch((err) => stats.recordApiError("getAllItems", err)),
+      );
+    }
+
+    // ── 10% fetch categories ──────────────────────────────────────────────
+    const categoryCount = Math.ceil(connectedPresence.length * 0.1);
+    const categoryPromises = [];
+    for (let i = 0; i < categoryCount && i < presenceTokens.length; i++) {
+      const tokenIdx = Math.floor(Math.random() * presenceTokens.length);
+      const token = presenceTokens[tokenIdx].token;
+
+      // Alternate between GetCategories and GetParentCategories
+      const apiCall =
+        i % 2 === 0 ? getCategories(token) : getParentCategories(token);
+
+      categoryPromises.push(
+        apiCall
+          .then((res) => {
+            stats.recordApiCall(res.latencyMs);
+            if (res.status >= 400)
+              stats.recordApiError(
+                "getCategories",
+                new Error(`HTTP ${res.status}`),
+              );
+          })
+          .catch((err) => stats.recordApiError("getCategories", err)),
+      );
+    }
+
+    await Promise.allSettled([...browsePromises, ...categoryPromises]);
+
     // ── Random churn: 5% disconnect, 5% reconnect ────────────────────────
     const churnCount = Math.ceil(connectedPresence.length * 0.05);
 
@@ -155,7 +209,7 @@ await runScenario("06-Mixed-Realistic", async (stats, config) => {
     const throughput = stats.getMessageThroughput();
 
     console.log(
-      `  📊 Min ${minute}: presence=${currentPresence} chat=${currentChat} | ${Math.round(throughput)} msg/s | server=${serverMetrics?.total ?? "?"}`,
+      `  📊 Min ${minute}: presence=${currentPresence} chat=${currentChat} | ${Math.round(throughput)} msg/s | api=${stats.counters.apiCalls}/${stats.counters.apiErrors}err | server=${serverMetrics?.total ?? "?"}`,
     );
 
     if (minute % 5 === 0) {

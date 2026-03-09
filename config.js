@@ -8,6 +8,8 @@ const config = {
   // ── Target Environment ──────────────────────────────────────────────────────
   // The dedicated WS subdomain bypasses CloudFront → direct ALB → pods
   BASE_URL: process.env.C2C_BASE_URL || "https://ws-c2c-api-uat.gini.iq",
+  // REST API base (different host from WebSocket)
+  API_BASE_URL: process.env.C2C_API_BASE_URL || "https://c2c-api-uat.gini.iq",
   PRESENCE_HUB: "/hubs/presence",
   MESSAGE_HUB: "/hubs/message",
   HEALTH_ENDPOINT: "/health/live",

@@ -27,7 +27,7 @@ BEGIN;
 -- ── Configuration ─────────────────────────────────────────────────────────────
 DO $$
 DECLARE
-  pair_count INT := 500;
+  pair_count INT := 1000;
   seller_user_id UUID;
   buyer_user_id UUID;
   profile_id UUID;

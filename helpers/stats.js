@@ -55,6 +55,11 @@ class Stats {
         highestTrackableValue: 60_000,
         numberOfSignificantValueDigits: 3,
       }),
+      apiLatency: hdr.build({
+        lowestDiscernibleValue: 1,
+        highestTrackableValue: 60_000,
+        numberOfSignificantValueDigits: 3,
+      }),
     };
 
     // ── Atomic Counters ────────────────────────────────────────────────────
@@ -74,6 +79,8 @@ class Stats {
       notificationsReceived: 0,
       isUserOnlineCalls: 0,
       typingIndicatorsSent: 0,
+      apiCalls: 0,
+      apiErrors: 0,
       errors: 0,
     };
 
@@ -183,6 +190,17 @@ class Stats {
   recordError(category, error) {
     this.counters.errors++;
     this._addError(category, error);
+  }
+
+  recordApiCall(latencyMs) {
+    this.counters.apiCalls++;
+    this.histograms.apiLatency.recordValue(Math.max(1, Math.round(latencyMs)));
+  }
+
+  recordApiError(endpoint, error) {
+    this.counters.apiErrors++;
+    this.counters.errors++;
+    this._addError(`api:${endpoint}`, error);
   }
 
   // ── Tier Snapshot (for ramp/breakpoint) ───────────────────────────────────
