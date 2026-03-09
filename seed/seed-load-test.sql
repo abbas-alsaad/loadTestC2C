@@ -40,7 +40,7 @@ BEGIN
 
   -- Get a valid category ID (any active leaf category)
   SELECT "Id" INTO category_id
-  FROM "Categories"
+  FROM "Category"
   WHERE "IsDeleted" = false
     AND "IsLeaf" = true
   LIMIT 1;
@@ -88,7 +88,7 @@ BEGIN
       false,
       0
     )
-    ON CONFLICT ("UserName") DO NOTHING;
+    ON CONFLICT ("NormalizedUserName") DO NOTHING;
 
     -- Get seller_user_id in case of conflict
     SELECT "Id" INTO seller_user_id FROM "AspNetUsers"
@@ -127,16 +127,20 @@ BEGIN
       false,
       0
     )
-    ON CONFLICT ("UserName") DO NOTHING;
+    ON CONFLICT ("NormalizedUserName") DO NOTHING;
 
     -- ── Create seller profile (table is "Profile", not "Sellers") ───────────
     profile_id := gen_random_uuid();
 
-    INSERT INTO "Profile" ("Id", "AppUserId", "IsDeleted")
+    INSERT INTO "Profile" ("Id", "AppUserId", "IsDeleted", "CustomerAccountNumber", "LogoPath", "CreatedAt", "Status")
     VALUES (
       profile_id,
       seller_user_id,
-      false
+      false,
+      'LOADTEST_' || i,
+      '',
+      NOW(),
+      1
     )
     ON CONFLICT DO NOTHING;
 
@@ -151,20 +155,29 @@ BEGIN
     item_id := gen_random_uuid();
 
     INSERT INTO "Items" (
-      "Id", "Name", "Description", "Price", "SellerId",
-      "LastCategoryId", "Status", "IsDeleted", "CreatedAt", "UpdatedAt"
+      "Id", "Title", "Description", "Price", "SellerId",
+      "LastCategoryId", "Status", "IsDeleted", "CreatedAt", "UpdatedAt",
+      "ItemStatus", "SearchText", "ContactPhoneNumber", "WhatsappPhoneNumber",
+      "SellType", "LifecycleStatus", "Gov"
     )
     VALUES (
       item_id,
       'Load Test Item ' || i,
       'Item created for load testing — pair ' || i,
       10000 + (i * 100),
-      profile_id,                    -- SellerId references Profile.Id
+      profile_id,
       category_id,
-      1,                             -- Published status
+      1,
       false,
       NOW(),
-      NOW()
+      NOW(),
+      0,                             -- ItemStatus (e.g. 0 = New)
+      'load test item ' || i,        -- SearchText
+      '',                            -- ContactPhoneNumber
+      '',                            -- WhatsappPhoneNumber
+      0,                             -- SellType = MarketplaceListing
+      1,                             -- LifecycleStatus = Published
+      0                              -- Gov
     )
     ON CONFLICT DO NOTHING;
 
@@ -189,22 +202,22 @@ COMMIT;
 --     i."Id" AS "itemId",
 --     seller_user."UserName" AS "sellerUsername",
 --     seller_user."Id"::TEXT AS "sellerUserId",
---     'loadtest_buyer_' || ROW_NUMBER() OVER (ORDER BY i."CreatedAt") - 1 AS "buyerUsername",
+--     buyer_user."UserName" AS "buyerUsername",
 --     buyer_user."Id"::TEXT AS "buyerUserId",
---     i."Name" AS "name"
+--     i."Title" AS "name"
 --   FROM "Items" i
 --   JOIN "Profile" p ON i."SellerId" = p."Id"
 --   JOIN "AspNetUsers" seller_user ON p."AppUserId" = seller_user."Id"
---   LEFT JOIN "AspNetUsers" buyer_user
---     ON buyer_user."UserName" = 'loadtest_buyer_' || (ROW_NUMBER() OVER (ORDER BY i."CreatedAt") - 1)
---   WHERE i."Name" LIKE 'Load Test Item%'
+--   JOIN "AspNetUsers" buyer_user
+--     ON buyer_user."UserName" = REPLACE(seller_user."UserName", 'seller', 'buyer')
+--   WHERE i."Title" LIKE 'Load Test Item%'
 --   ORDER BY i."CreatedAt"
 -- ) t;
 --
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Verification:
 -- ═══════════════════════════════════════════════════════════════════════════════
--- SELECT COUNT(*) AS test_items FROM "Items" WHERE "Name" LIKE 'Load Test Item%';
+-- SELECT COUNT(*) AS test_items FROM "Items" WHERE "Title" LIKE 'Load Test Item%';
 -- SELECT COUNT(*) AS test_users FROM "AspNetUsers" WHERE "UserName" LIKE 'loadtest_%';
 -- SELECT COUNT(*) AS test_profiles FROM "Profile" p
 --   JOIN "AspNetUsers" u ON p."AppUserId" = u."Id"
@@ -213,7 +226,7 @@ COMMIT;
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Cleanup:
 -- ═══════════════════════════════════════════════════════════════════════════════
--- DELETE FROM "Items" WHERE "Name" LIKE 'Load Test Item%';
+-- DELETE FROM "Items" WHERE "Title" LIKE 'Load Test Item%';
 -- DELETE FROM "Profile" WHERE "AppUserId" IN (
 --   SELECT "Id" FROM "AspNetUsers" WHERE "UserName" LIKE 'loadtest_%'
 -- );

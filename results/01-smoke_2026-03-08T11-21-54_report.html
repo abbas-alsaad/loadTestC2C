@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C2C SignalR Load Test — 01-Smoke</title>
+  <style>
+    :root { --bg: #0f172a; --card: #1e293b; --text: #e2e8f0; --muted: #94a3b8; --accent: #3b82f6; --green: #22c55e; --red: #ef4444; --yellow: #eab308; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; background: var(--bg); color: var(--text); padding: 2rem; }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    h2 { font-size: 1.1rem; color: var(--accent); margin: 1.5rem 0 0.75rem; border-bottom: 1px solid #334155; padding-bottom: 0.25rem; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; }
+    .status { font-size: 1.25rem; font-weight: bold; color: #22c55e; }
+    .meta { color: var(--muted); font-size: 0.85rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .card { background: var(--card); border-radius: 0.5rem; padding: 1rem; }
+    .card .label { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .card .value { font-size: 1.5rem; font-weight: bold; margin-top: 0.25rem; }
+    .card .value.green { color: var(--green); }
+    .card .value.red { color: var(--red); }
+    .card .value.yellow { color: var(--yellow); }
+    .card .desc { color: var(--muted); font-size: 0.7rem; margin-top: 0.35rem; direction: rtl; text-align: right; line-height: 1.4; }
+    table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 0.5rem; overflow: hidden; margin-bottom: 1rem; }
+    th, td { padding: 0.5rem 0.75rem; text-align: left; border-bottom: 1px solid #334155; font-size: 0.85rem; }
+    th { background: #334155; color: var(--muted); text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.05em; }
+    .bar-container { width: 100%; background: #334155; border-radius: 4px; height: 20px; position: relative; overflow: hidden; }
+    .bar { height: 100%; border-radius: 4px; transition: width 0.3s; }
+    .bar.p50 { background: var(--green); }
+    .bar.p95 { background: var(--yellow); }
+    .bar.p99 { background: var(--red); }
+    .error-log { background: var(--card); border-radius: 0.5rem; padding: 1rem; max-height: 300px; overflow-y: auto; font-size: 0.8rem; }
+    .error-entry { padding: 0.25rem 0; border-bottom: 1px solid #334155; color: var(--muted); }
+    .error-entry .cat { color: var(--red); font-weight: bold; }
+    footer { margin-top: 2rem; color: var(--muted); font-size: 0.75rem; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <h1>C2C SignalR Load Test</h1>
+      <div class="meta">01-Smoke — 2026-03-08T11:21:54.949Z — https://ws-c2c-api-uat.gini.iq</div>
+    </div>
+    <div class="status">✅ PASSED</div>
+  </div>
+
+  <!-- Summary Cards -->
+  <div class="grid">
+    <div class="card">
+      <div class="label">Duration</div>
+      <div class="value">58s</div>
+      <div class="desc">المدة الكلية لتشغيل الاختبار من البداية للنهاية</div>
+    </div>
+    <div class="card">
+      <div class="label">Connection Success Rate</div>
+      <div class="value green">100.0%</div>
+      <div class="desc">نسبة الاتصالات الناجحة من مجموع المحاولات — الهدف ≥ 99%</div>
+    </div>
+    <div class="card">
+      <div class="label">Connections Opened</div>
+      <div class="value green">18</div>
+      <div class="desc">عدد اتصالات WebSocket التي تم فتحها بنجاح</div>
+    </div>
+    <div class="card">
+      <div class="label">Connections Failed</div>
+      <div class="value green">0</div>
+      <div class="desc">عدد الاتصالات التي فشلت أثناء المحاولة (timeout أو رفض)</div>
+    </div>
+    <div class="card">
+      <div class="label">Peak Active</div>
+      <div class="value">18</div>
+      <div class="desc">أعلى عدد اتصالات نشطة في نفس اللحظة خلال الاختبار</div>
+    </div>
+    <div class="card">
+      <div class="label">Currently Active</div>
+      <div class="value">0</div>
+      <div class="desc">عدد الاتصالات النشطة حالياً عند انتهاء الاختبار</div>
+    </div>
+    <div class="card">
+      <div class="label">Reconnections</div>
+      <div class="value ">0</div>
+      <div class="desc">عدد مرات إعادة الاتصال التلقائية بعد انقطاع مؤقت</div>
+    </div>
+    <div class="card">
+      <div class="label">Unexpected Disconnects</div>
+      <div class="value green">0</div>
+      <div class="desc">عدد الانقطاعات غير المتوقعة — السيرفر قطع الاتصال بدون طلب</div>
+    </div>
+    
+    <div class="card">
+      <div class="label">Message Delivery Rate</div>
+      <div class="value green">100.0%</div>
+      <div class="desc">نسبة الرسائل التي وصلت للمستلم من مجموع المرسلة — الهدف 100%</div>
+    </div>
+    <div class="card">
+      <div class="label">Messages Sent</div>
+      <div class="value">14</div>
+      <div class="desc">عدد الرسائل التي تم إرسالها عبر SendMessage في الشات</div>
+    </div>
+    <div class="card">
+      <div class="label">Messages Received</div>
+      <div class="value green">14</div>
+      <div class="desc">عدد الرسائل التي وصلت للطرف الآخر عبر حدث NewMessage</div>
+    </div>
+    <div class="card">
+      <div class="label">Messages Lost</div>
+      <div class="value red">14</div>
+      <div class="desc">عدد الرسائل المفقودة — أُرسلت لكن لم تصل خلال 10 ثواني</div>
+    </div>
+    <div class="card">
+      <div class="label">Messages Duplicated</div>
+      <div class="value green">0</div>
+      <div class="desc">عدد الرسائل المكررة — وصلت أكثر من مرة للمستلم</div>
+    </div>
+    
+    
+    <div class="card">
+      <div class="label">Heartbeats Sent</div>
+      <div class="value">10</div>
+      <div class="desc">عدد نبضات القلب المرسلة للسيرفر لتجديد الحضور في Redis</div>
+    </div>
+    <div class="card">
+      <div class="label">Heartbeats Succeeded</div>
+      <div class="value green">10</div>
+      <div class="desc">عدد النبضات التي نجحت — السيرفر استجاب وجدد الـ TTL</div>
+    </div>
+    
+    
+    <div class="card">
+      <div class="label">IsUserOnline Calls</div>
+      <div class="value">1</div>
+      <div class="desc">عدد استدعاءات فحص حالة المستخدم (متصل/غير متصل) من Redis</div>
+    </div>
+    
+    
+    <div class="card">
+      <div class="label">Notifications Received</div>
+      <div class="value">21</div>
+      <div class="desc">عدد الإشعارات المستلمة عبر PresenceHub (عروض، دفع، شات)</div>
+    </div>
+    <div class="card">
+      <div class="label">Total Errors</div>
+      <div class="value green">0</div>
+      <div class="desc">مجموع كل الأخطاء — اتصال، رسائل، نبضات، أو أخطاء أخرى</div>
+    </div>
+    
+    <div class="card">
+      <div class="label">Msg Throughput</div>
+      <div class="value">0.8 msg/s</div>
+      <div class="desc">معدل إرسال الرسائل في الثانية (آخر 10 ثواني)</div>
+    </div>
+    <div class="card">
+      <div class="label">Conn Throughput</div>
+      <div class="value">0 conn/s</div>
+      <div class="desc">معدل فتح الاتصالات الجديدة في الثانية (آخر 10 ثواني)</div>
+    </div>
+    
+  </div>
+
+  <!-- Latency Distribution -->
+  <h2>Latency Distribution (ms)</h2>
+  <table><tr><th>Metric</th><th>Count</th><th>Mean</th><th>p50</th><th>p95</th><th>p99</th><th>Max</th></tr><tr>
+      <td>connectionTime</td>
+      <td>18</td>
+      <td>332ms</td>
+      <td>330ms</td>
+      <td>371ms</td>
+      <td>371ms</td>
+      <td>371ms</td>
+    </tr><tr>
+      <td>messageLatency</td>
+      <td>14</td>
+      <td>1ms</td>
+      <td>1ms</td>
+      <td>1ms</td>
+      <td>1ms</td>
+      <td>1ms</td>
+    </tr><tr>
+      <td>heartbeatLatency</td>
+      <td>10</td>
+      <td>83.6ms</td>
+      <td>83ms</td>
+      <td>85ms</td>
+      <td>85ms</td>
+      <td>85ms</td>
+    </tr><tr>
+      <td>isUserOnlineLatency</td>
+      <td>1</td>
+      <td>87ms</td>
+      <td>87ms</td>
+      <td>87ms</td>
+      <td>87ms</td>
+      <td>87ms</td>
+    </tr><tr>
+      <td>notificationLatency</td>
+      <td>21</td>
+      <td>1ms</td>
+      <td>1ms</td>
+      <td>1ms</td>
+      <td>1ms</td>
+      <td>1ms</td>
+    </tr></table>
+
+  <!-- Latency Bars -->
+  <h2>Latency Visualization</h2>
+  <div style="margin-bottom: 0.75rem;">
+      <div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem;">connectionTime</div>
+      <div class="bar-container">
+        <div class="bar p99" style="width: 100%;" title="p99: 371ms"></div>
+      </div>
+      <div style="display: flex; gap: 1rem; font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem;">
+        <span>p50: 330ms</span>
+        <span>p95: 371ms</span>
+        <span style="color: var(--red);">p99: 371ms</span>
+        <span>max: 371ms</span>
+      </div>
+    </div><div style="margin-bottom: 0.75rem;">
+      <div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem;">messageLatency</div>
+      <div class="bar-container">
+        <div class="bar p99" style="width: 100%;" title="p99: 1ms"></div>
+      </div>
+      <div style="display: flex; gap: 1rem; font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem;">
+        <span>p50: 1ms</span>
+        <span>p95: 1ms</span>
+        <span style="color: var(--red);">p99: 1ms</span>
+        <span>max: 1ms</span>
+      </div>
+    </div><div style="margin-bottom: 0.75rem;">
+      <div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem;">heartbeatLatency</div>
+      <div class="bar-container">
+        <div class="bar p99" style="width: 100%;" title="p99: 85ms"></div>
+      </div>
+      <div style="display: flex; gap: 1rem; font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem;">
+        <span>p50: 83ms</span>
+        <span>p95: 85ms</span>
+        <span style="color: var(--red);">p99: 85ms</span>
+        <span>max: 85ms</span>
+      </div>
+    </div><div style="margin-bottom: 0.75rem;">
+      <div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem;">isUserOnlineLatency</div>
+      <div class="bar-container">
+        <div class="bar p99" style="width: 100%;" title="p99: 87ms"></div>
+      </div>
+      <div style="display: flex; gap: 1rem; font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem;">
+        <span>p50: 87ms</span>
+        <span>p95: 87ms</span>
+        <span style="color: var(--red);">p99: 87ms</span>
+        <span>max: 87ms</span>
+      </div>
+    </div><div style="margin-bottom: 0.75rem;">
+      <div style="font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem;">notificationLatency</div>
+      <div class="bar-container">
+        <div class="bar p99" style="width: 100%;" title="p99: 1ms"></div>
+      </div>
+      <div style="display: flex; gap: 1rem; font-size: 0.7rem; color: var(--muted); margin-top: 0.15rem;">
+        <span>p50: 1ms</span>
+        <span>p95: 1ms</span>
+        <span style="color: var(--red);">p99: 1ms</span>
+        <span>max: 1ms</span>
+      </div>
+    </div>
+
+  <!-- Tier Snapshots -->
+  
+
+  <!-- Error Log -->
+  
+
+  <!-- Thresholds -->
+  <h2>Threshold Evaluation</h2>
+  <table>
+    <tr><th>Metric</th><th>Threshold</th><th>Actual</th><th>Result</th></tr>
+    <tr>
+      <td>Connection Success Rate</td>
+      <td>≥ 99%</td>
+      <td>100.0%</td>
+      <td>✅ PASS</td>
+    </tr>
+    
+    <tr>
+      <td>Message Delivery Rate</td>
+      <td>≥ 100%</td>
+      <td>100.0%</td>
+      <td>✅ PASS</td>
+    </tr>
+    
+    
+    <tr>
+      <td>Connection Time p99</td>
+      <td>≤ 5000ms</td>
+      <td>371ms</td>
+      <td>✅ PASS</td>
+    </tr>
+    
+    
+    <tr>
+      <td>Message Latency p99</td>
+      <td>≤ 500ms</td>
+      <td>1ms</td>
+      <td>✅ PASS</td>
+    </tr>
+    
+    
+    <tr>
+      <td>Heartbeat Latency p99</td>
+      <td>≤ 1000ms</td>
+      <td>85ms</td>
+      <td>✅ PASS</td>
+    </tr>
+    
+  </table>
+
+  <!-- Test Configuration -->
+  <h2>Test Configuration</h2>
+  <table>
+    <tr><th>Parameter</th><th>Value</th></tr>
+    <tr><td>Target</td><td>https://ws-c2c-api-uat.gini.iq</td></tr>
+    <tr><td>Presence Hub</td><td>/hubs/presence</td></tr>
+    <tr><td>Message Hub</td><td>/hubs/message</td></tr>
+    <tr><td>JWT Algorithm</td><td>HS512</td></tr>
+    <tr><td>Server Timeout</td><td>65000ms</td></tr>
+    <tr><td>Keep Alive</td><td>15000ms</td></tr>
+    <tr><td>Heartbeat Interval</td><td>45000ms</td></tr>
+    <tr><td>Max Concurrent Connects</td><td>200</td></tr>
+    <tr><td>Node.js</td><td>v18.20.5</td></tr>
+    <tr><td>Platform</td><td>darwin arm64</td></tr>
+  </table>
+
+  <footer>
+    Generated by C2C SignalR Load Test Suite — 2026-03-08T11:21:54.949Z
+  </footer>
+</body>
+</html>

@@ -1,0 +1,84 @@
+{
+  "scenario": "01-Smoke",
+  "timestamp": "2026-03-08T11:21:54.945Z",
+  "target": "https://ws-c2c-api-uat.gini.iq",
+  "summary": {
+    "connectionSuccessRate": 100,
+    "messageDeliveryRate": 100,
+    "peakActiveConnections": 18
+  },
+  "elapsedSec": 58,
+  "counters": {
+    "connectionsOpened": 18,
+    "connectionsFailed": 0,
+    "connectionsActive": 0,
+    "peakActive": 18,
+    "reconnections": 0,
+    "unexpectedDisconnects": 0,
+    "messagesSent": 14,
+    "messagesReceived": 14,
+    "messagesLost": 14,
+    "messagesDuplicate": 0,
+    "heartbeatsSent": 10,
+    "heartbeatsSucceeded": 10,
+    "notificationsReceived": 21,
+    "isUserOnlineCalls": 1,
+    "typingIndicatorsSent": 0,
+    "errors": 0
+  },
+  "throughput": {
+    "messagesPerSec": 0.8,
+    "connectionsPerSec": 0
+  },
+  "latencies": {
+    "connectionTime": {
+      "count": 18,
+      "mean": 332,
+      "p50": 330,
+      "p95": 371,
+      "p99": 371,
+      "max": 371
+    },
+    "messageLatency": {
+      "count": 14,
+      "mean": 1,
+      "p50": 1,
+      "p95": 1,
+      "p99": 1,
+      "max": 1
+    },
+    "heartbeatLatency": {
+      "count": 10,
+      "mean": 83.6,
+      "p50": 83,
+      "p95": 85,
+      "p99": 85,
+      "max": 85
+    },
+    "isUserOnlineLatency": {
+      "count": 1,
+      "mean": 87,
+      "p50": 87,
+      "p95": 87,
+      "p99": 87,
+      "max": 87
+    },
+    "notificationLatency": {
+      "count": 21,
+      "mean": 1,
+      "p50": 1,
+      "p95": 1,
+      "p99": 1,
+      "max": 1
+    }
+  },
+  "tierSnapshots": [],
+  "errors": [],
+  "thresholds": {
+    "connectionSuccessRate": 0.99,
+    "messageDeliveryRate": 1,
+    "maxConnectionTimeMs": 5000,
+    "maxMessageLatencyP99Ms": 500,
+    "maxHeartbeatLatencyP99Ms": 1000
+  }
+}
